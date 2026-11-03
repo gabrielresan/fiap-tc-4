@@ -1,6 +1,8 @@
 package com.example.weeklyreport.model;
 
 import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -64,5 +66,15 @@ class ReportPeriodTest {
     void rejectsStartNotBeforeEnd() {
         LocalDate day = LocalDate.of(2026, 10, 26);
         assertThrows(IllegalArgumentException.class, () -> new ReportPeriod(day, day));
+    }
+
+    @Test
+    void containsIsInclusiveAtStartAndExclusiveAtEnd() {
+        ReportPeriod period = new ReportPeriod(LocalDate.of(2026, 10, 26), LocalDate.of(2026, 11, 2));
+
+        assertTrue(period.contains(Instant.parse("2026-10-26T03:00:00Z")));
+        assertTrue(period.contains(Instant.parse("2026-11-02T02:59:59Z")));
+        assertFalse(period.contains(Instant.parse("2026-11-02T03:00:00Z")));
+        assertFalse(period.contains(Instant.parse("2026-10-26T02:59:59Z")));
     }
 }

@@ -35,6 +35,10 @@ public record ReportPeriod(
         return endDate.atStartOfDay(ZONE).toInstant();
     }
 
+    public boolean contains(Instant instant) {
+        return !instant.isBefore(startInstant()) && instant.isBefore(endInstant());
+    }
+
     public List<LocalDate> days() {
         return startDate.datesUntil(endDate).toList();
     }
