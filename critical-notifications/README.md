@@ -1,27 +1,80 @@
 # Critical notifications
 
-Módulo Maven independente em Java 21, seguindo a estrutura da branch `feature/weekly-report`, com modelos imutáveis, serviço Java e testes JUnit 5.
+API REST independente para receber feedbacks de outros serviços e enviar e-mails aos administradores quando a urgência for `CRITICAL`. Usa Java 21 e Spring Boot 4.1.2, mesma versão do projeto raiz. Mantém os modelos e a lógica de domínio separados do transporte HTTP e SMTP.
 
-## Comportamento
+## Endpoint
 
-`CriticalNotificationService.notify(Feedback)` envia uma notificação quando a urgência é `CRITICAL` e retorna `true` após o envio concluir. Para `LOW` e `MEDIUM`, não envia e retorna `false`. A classificação de urgência é recebida do serviço de feedback; este módulo não infere urgência pela nota.
+`POST /notifications`, com `Content-Type: application/json`:
 
-O contrato `Feedback` mantém os campos e valores da weekly-report: `description`, `rating` (0 a 10), `urgency` (`LOW`, `MEDIUM`, `CRITICAL`) e `submittedAt` (`Instant`).
+```json
+{
+  "description": "Aula indisponível",
+  "rating": 1,
+  "urgency": "CRITICAL",
+  "submittedAt": "2026-11-04T12:00:00Z"
+}
+```
 
-O aviso contém a descrição, a urgência, a data original do feedback (`submittedAt`) e o instante da tentativa de envio (`sentAt`), obtido pelo `Clock` injetado. As datas usam `Instant` para preservar o instante independentemente do fuso horário.
+Todos os campos são obrigatórios. A descrição não pode ser vazia. A nota deve ser um inteiro entre 0 e 10. A urgência deve ser `LOW`, `MEDIUM` ou `CRITICAL`. A data é um `Instant` ISO-8601. A classificação da urgência é responsabilidade do serviço de feedback; esta API não a infere pela nota.
 
-## Integração
+| HTTP | Resposta | Significado |
+| --- | --- | --- |
+| 200 | `{"sent":true}` | Feedback crítico; servidor SMTP aceitou o envio. |
+| 200 | `{"sent":false}` | Feedback de urgência LOW ou MEDIUM; nenhum e-mail enviado. |
+| 400 | `application/problem+json` | JSON inválido ou campos inválidos/ausentes. |
+| 503 | `application/problem+json` | Falha ao enviar pelo servidor SMTP. |
 
-Construa o serviço com uma implementação de `NotificationSender` e um `Clock`, por exemplo `new CriticalNotificationService(sender, Clock.systemUTC())`. O adaptador de envio deve entregar o aviso aos administradores e lançar uma exceção quando a entrega falhar. O serviço propaga essa exceção para que o chamador possa tratar a falha ou repetir a operação.
+O envio é síncrono; a API só retorna `sent: true` após o adaptador SMTP concluir. Isso não confirma a chegada à caixa de entrada. O aviso contém descrição, urgência, data original do feedback e instante da tentativa de envio, em UTC. Não há persistência, deduplicação ou retentativa interna. Repetir a requisição pode enviar outro e-mail, inclusive após falhas de comunicação com resultado incerto.
 
-O módulo não implementa envio real de e-mail, endpoint HTTP, persistência nem configuração de cloud nesta etapa. A implementação do adaptador, os destinatários e o handler serverless serão definidos na integração com o provedor escolhido pelo grupo. Não há deduplicação ou retentativa interna: cada chamada para feedback crítico aciona o adaptador uma vez.
+## Configuração e execução
 
-## Validação
+O módulo tem aplicação, porta e dependências próprias, sem depender da aplicação raiz ou do módulo weekly-report.
 
-Com JDK 21 e Maven instalados, execute a partir da raiz do repositório:
+| Variável | Padrão | Uso |
+| --- | --- | --- |
+| `PORT` | `8081` | Porta HTTP. |
+| `NOTIFICATION_FROM` | obrigatório | E-mail remetente. |
+| `NOTIFICATION_RECIPIENTS` | obrigatório | E-mails dos administradores, separados por vírgula. |
+| `SMTP_HOST` | `localhost` | Servidor SMTP. |
+| `SMTP_PORT` | `1025` | Porta SMTP. |
+| `SMTP_USERNAME` | vazio | Usuário SMTP. |
+| `SMTP_PASSWORD` | vazio | Senha SMTP. |
+| `SMTP_AUTH` | `false` | Habilita autenticação SMTP. |
+| `SMTP_STARTTLS` | `false` | Habilita e exige STARTTLS. |
+
+A aplicação valida remetente e destinatários ao iniciar. Os padrões SMTP são para um servidor de captura de e-mails local. Para um provedor SMTP autenticado, configure host, porta, usuário, senha e habilite `SMTP_AUTH` e `SMTP_STARTTLS` conforme o provedor. Os timeouts de conexão, leitura e escrita são de cinco segundos.
+
+Exemplo em PowerShell com servidor SMTP local já disponível em `localhost:1025`:
+
+```powershell
+$env:NOTIFICATION_FROM = 'notifications@example.com'
+$env:NOTIFICATION_RECIPIENTS = 'admin@example.com'
+mvn -f critical-notifications/pom.xml spring-boot:run
+```
+
+Em outro terminal:
+
+```powershell
+$body = @{
+    description = 'Aula indisponível'
+    rating = 1
+    urgency = 'CRITICAL'
+    submittedAt = '2026-11-04T12:00:00Z'
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri 'http://localhost:8081/notifications' -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
+
+Para gerar e executar o JAR independente:
 
 ```sh
 mvn -f critical-notifications/pom.xml clean verify
+java -jar critical-notifications/target/critical-notifications-0.0.1-SNAPSHOT.jar
 ```
 
-Os testes verificam o filtro de urgência, os dados do aviso, a data de envio determinística, a propagação de falhas e as validações dos modelos e dependências.
+As mesmas variáveis de ambiente devem estar presentes ao executar o JAR. Os testes exercitam o fluxo HTTP com Spring MVC e envio simulado; não enviam e-mails reais.
+
+## Integração com o Tech Challenge
+
+O serviço de feedback chama este endpoint após classificar o feedback. A API não acessa o banco de outro serviço. A implantação em cloud/serverless, o deploy automatizado, o monitoramento e o controle de acesso entre serviços continuam pendentes. O endpoint atual não implementa autenticação.
+
+Referências: [Spring MVC](https://docs.spring.io/spring-boot/reference/web/servlet.html) e [configuração de e-mail do Spring Boot](https://docs.spring.io/spring-boot/reference/io/email.html).
