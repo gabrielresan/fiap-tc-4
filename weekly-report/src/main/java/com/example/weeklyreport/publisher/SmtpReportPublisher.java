@@ -57,7 +57,6 @@ public class SmtpReportPublisher implements ReportPublisher {
         }
     }
 
-    // Same SMTP behaviour as critical-notifications: optional STARTTLS, hostname check, 5s timeouts
     private static Properties mailProperties(SmtpSettings settings) {
         Properties properties = new Properties();
         properties.put("mail.smtp.host", settings.host());
