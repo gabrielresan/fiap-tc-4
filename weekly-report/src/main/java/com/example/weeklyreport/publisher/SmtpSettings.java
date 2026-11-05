@@ -5,9 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * SMTP configuration read from the same environment variables used by the critical-notifications module.
- */
 public record SmtpSettings(
         String host,
         int port,
