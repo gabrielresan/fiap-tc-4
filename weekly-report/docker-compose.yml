@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: feedbacks
+      POSTGRES_USER: weekly_report
+      POSTGRES_PASSWORD: weekly_report
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./src/test/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./local/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    ports:
+      - "1025:1025"
+      - "8025:8025"
