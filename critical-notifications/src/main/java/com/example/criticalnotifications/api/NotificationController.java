@@ -22,6 +22,6 @@ public class NotificationController {
         return new NotificationResponse(service.notify(request.toFeedback()));
     }
 
-    public record NotificationResponse(boolean sent) {
+    public record NotificationResponse(boolean logged) {
     }
 }
