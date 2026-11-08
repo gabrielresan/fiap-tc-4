@@ -2,6 +2,8 @@
 
 API REST independente em Java 21 e Spring Boot 4.1.2 (Spring MVC) que recebe as avaliações dos estudantes, classifica a urgência pela nota, grava no PostgreSQL e encaminha as avaliações críticas ao módulo `critical-notifications`.
 
+O mesmo código roda localmente, sobre o Tomcat embutido, e como função AWS Lambda, atrás do API Gateway (ver [Execução na AWS Lambda](#execução-na-aws-lambda)).
+
 É o único serviço que **escreve** na tabela `feedbacks`; o `weekly-report` apenas lê.
 
 ## Endpoint
@@ -62,6 +64,7 @@ A avaliação é gravada **antes** da notificação. Se o `critical-notification
 
 | Classe | Responsabilidade |
 | --- | --- |
+| `FeedbackServiceHandler` | Ponto de entrada da Lambda; repassa os eventos do API Gateway à aplicação Spring. |
 | `FeedbackController` | Recebe `POST /avaliacao` e converte entrada e saída. |
 | `ApiExceptionHandler` | Responde 400 em `problem+json` para entradas inválidas. |
 | `FeedbackService` | Orquestra classificação, gravação e notificação. |
@@ -160,8 +163,43 @@ mvn -f feedback-service/pom.xml clean package
 java -jar feedback-service/target/feedback-service-0.0.1-SNAPSHOT.jar
 ```
 
-## Integração com o Tech Challenge
+## Execução na AWS Lambda
 
-O PostgreSQL local deste módulo é separado do PostgreSQL do `weekly-report`, que cria o esquema por script próprio. Em nuvem, os dois serviços devem apontar para o mesmo banco. O `feedback-service` cria o esquema via JPA, e o `weekly-report` usa um usuário somente leitura.
+A função usa a biblioteca [AWS Serverless Java Container](https://github.com/aws/serverless-java-container) (`aws-serverless-java-container-springboot4`). `FeedbackServiceHandler` inicia a aplicação Spring uma única vez, na fase de inicialização da instância, com o perfil `lambda`. Em seguida, converte cada evento do API Gateway em uma requisição para o mesmo `FeedbackController` usado localmente. Controller, serviço, validação e JPA não mudam.
 
-Ainda pendentes: empacotamento serverless (por exemplo, AWS Lambda com AWS Serverless Java Container, ou contêiner), provisionamento na AWS, gerenciamento de segredos, deploy automatizado e monitoramento. O endpoint atual não implementa autenticação nem limite de requisições.
+### Empacotamento
+
+```sh
+mvn -f feedback-service/pom.xml clean package
+```
+
+Gera dois artefatos em `feedback-service/target/`:
+
+| Artefato | Uso |
+| --- | --- |
+| `feedback-service-0.0.1-SNAPSHOT.jar` | Execução local com `java -jar` (Tomcat). |
+| `feedback-service-lambda.zip` | Pacote da Lambda: classes na raiz e dependências em `lib/`, formato aceito pelo runtime `java21`. |
+
+O zip não inclui o Tomcat, pois na Lambda as requisições chegam pelo container serverless. Com cerca de 45 MB, deve ser enviado via S3, como fazem SAM, CDK e Terraform, pois o limite de upload direto no console é de 50 MB. O módulo `weekly-report` usa JAR único (shade). Aqui foi usado o zip com `lib/` porque o shade sobrescreve os arquivos de registro do Spring em `META-INF` e pode descartar autoconfigurações.
+
+### Configuração da função
+
+| Configuração | Valor |
+| --- | --- |
+| Runtime | Java 21 |
+| Handler | `com.example.feedbackservice.FeedbackServiceHandler::handleRequest` |
+| Gatilho | API Gateway HTTP API (payload 2.0), rota `POST /avaliacao` |
+| Memória | 1024 MB ou mais (mais memória também dá mais CPU e acelera a inicialização) |
+| SnapStart | Recomendado: a inicialização do Spring leva de 8 a 10 s sem ele |
+
+Na Lambda, `DB_URL`, `DB_USER`, `DB_PASSWORD` e `NOTIFICATIONS_URL` são obrigatórias. Como no `weekly-report`, a função falha na inicialização se alguma estiver ausente. As demais variáveis de [Configuração](#configuração) continuam opcionais. As credenciais do banco devem vir do Secrets Manager.
+
+O perfil `lambda` (`application-lambda.properties`):
+
+- Ativa o container serverless no lugar do Tomcat. Fora da Lambda, ele fica desativado por `spring.autoconfigure.exclude` em `application.properties`.
+- Limita o pool de conexões a uma conexão, pois cada instância atende uma requisição por vez. Isso também evita esgotar as conexões do RDS quando a Lambda escala; com muitas instâncias simultâneas, recomenda-se o RDS Proxy.
+- Desativa o banner e reduz avisos de log. Os logs vão para o stdout, que a Lambda envia ao CloudWatch Logs.
+
+Para a Lambda acessar o RDS, ela precisa estar na mesma VPC. Nesse caso, chamar o `critical-notifications` ou outros serviços da AWS exige NAT Gateway ou VPC endpoints.
+
+Em produção, após a criação inicial da tabela, recomenda-se `DB_DDL_AUTO=validate`, para evitar a verificação de DDL em cada inicialização a frio.

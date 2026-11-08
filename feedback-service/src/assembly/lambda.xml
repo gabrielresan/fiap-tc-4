@@ -1,0 +1,32 @@
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 https://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <!-- Lambda java21 deployment package: application classes at the root, dependencies in lib/. -->
+    <id>lambda</id>
+    <formats>
+        <format>zip</format>
+    </formats>
+    <includeBaseDirectory>false</includeBaseDirectory>
+    <fileSets>
+        <fileSet>
+            <directory>${project.build.outputDirectory}</directory>
+            <outputDirectory>/</outputDirectory>
+        </fileSet>
+    </fileSets>
+    <dependencySets>
+        <dependencySet>
+            <outputDirectory>lib</outputDirectory>
+            <useProjectArtifact>false</useProjectArtifact>
+            <scope>runtime</scope>
+            <!-- Lambda serves requests through the serverless container, so the embedded Tomcat server
+                 is not needed. tomcat-embed-el stays: Bean Validation uses it for its messages. -->
+            <excludes>
+                <exclude>org.apache.tomcat.embed:tomcat-embed-core</exclude>
+                <exclude>org.apache.tomcat.embed:tomcat-embed-websocket</exclude>
+                <exclude>org.springframework.boot:spring-boot-tomcat</exclude>
+                <exclude>org.springframework.boot:spring-boot-starter-tomcat</exclude>
+                <exclude>org.springframework.boot:spring-boot-starter-tomcat-runtime</exclude>
+            </excludes>
+        </dependencySet>
+    </dependencySets>
+</assembly>
