@@ -1,0 +1,9 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: feedbacks
+      POSTGRES_USER: feedback_service
+      POSTGRES_PASSWORD: feedback_service
+    ports:
+      - "55433:5432"
