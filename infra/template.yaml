@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Tech Challenge 4 - plataforma de feedback (feedback-service, critical-notifications e weekly-report)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Nome do ambiente, usado como prefixo dos recursos
+
+Globals:
+  Function:
+    Runtime: java21
+    Architectures:
+      - x86_64
+    Timeout: 30
+    MemorySize: 512
+    Tags:
+      Project: fiap-tc-4
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-vpc
+        - Key: Project
+          Value: fiap-tc-4
+
+Outputs:
+  VpcId:
+    Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
+    Value: !Ref Vpc
