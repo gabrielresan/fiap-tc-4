@@ -1,5 +1,7 @@
 package com.example.weeklyreport;
 
+import com.example.weeklyreport.publisher.SmtpReportPublisher;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import com.example.weeklyreport.exception.FeedbackRepositoryException;
 import com.example.weeklyreport.exception.ReportPublishingException;
 import com.example.weeklyreport.formatter.HtmlReportFormatter;
@@ -102,5 +104,26 @@ class WeeklyReportHandlerTest {
         IllegalStateException exception =
                 assertThrows(IllegalStateException.class, () -> new WeeklyReportHandler(env, CLOCK));
         assertEquals("Environment variable DB_URL must be set", exception.getMessage());
+    }
+
+    @Test
+    void usesSmtpPublisherByDefault() {
+        Map<String, String> env = Map.of(
+                "NOTIFICATION_FROM", "reports@example.com",
+                "NOTIFICATION_RECIPIENTS", "admin@example.com");
+
+        assertInstanceOf(SmtpReportPublisher.class, WeeklyReportHandler.publisher(env));
+    }
+
+    @Test
+    void rejectsUnknownEmailProvider() {
+        Map<String, String> env = Map.of(
+                "NOTIFICATION_FROM", "reports@example.com",
+                "NOTIFICATION_RECIPIENTS", "admin@example.com",
+                "EMAIL_PROVIDER", "carrier-pigeon");
+
+        IllegalStateException exception =
+                assertThrows(IllegalStateException.class, () -> WeeklyReportHandler.publisher(env));
+        assertEquals("EMAIL_PROVIDER must be smtp or ses, got carrier-pigeon", exception.getMessage());
     }
 }

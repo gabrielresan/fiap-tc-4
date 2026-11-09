@@ -11,6 +11,12 @@ Parameters:
       - prod
     Description: Nome do ambiente, usado como prefixo dos recursos
 
+  ReportSenderEmail:
+    Type: String
+    AllowedPattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
+    ConstraintDescription: deve ser um endereco de e-mail valido
+    Description: Remetente do relatorio semanal; o Amazon SES envia um link de verificacao para ele
+
 Globals:
   Function:
     Runtime: java21
@@ -211,6 +217,11 @@ Resources:
         - Key: Project
           Value: fiap-tc-4
 
+  ReportSenderIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref ReportSenderEmail
+
 Outputs:
   VpcId:
     Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
@@ -231,3 +242,7 @@ Outputs:
   DatabaseSecretArn:
     Description: Segredo do Secrets Manager com usuario e senha do banco, gerenciado pelo RDS
     Value: !GetAtt Database.MasterUserSecret.SecretArn
+
+  ReportSenderIdentityName:
+    Description: Identidade do Amazon SES usada como remetente do relatorio semanal
+    Value: !Ref ReportSenderIdentity
