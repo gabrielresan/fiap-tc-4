@@ -18,7 +18,7 @@ class SmtpSettingsTest {
             "NOTIFICATION_RECIPIENTS", "admin@example.com");
 
     @Test
-    void usesLocalDefaultsLikeCriticalNotifications() {
+    void usesLocalMailpitDefaults() {
         SmtpSettings settings = SmtpSettings.fromEnvironment(REQUIRED);
 
         assertEquals("localhost", settings.host());
