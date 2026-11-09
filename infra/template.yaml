@@ -17,6 +17,10 @@ Parameters:
     ConstraintDescription: deve ser um endereco de e-mail valido
     Description: Remetente do relatorio semanal; o Amazon SES envia um link de verificacao para ele
 
+  AdminEmails:
+    Type: CommaDelimitedList
+    Description: E-mails dos administradores que recebem o relatorio semanal, separados por virgula
+
 Globals:
   Function:
     Runtime: java21
@@ -222,6 +226,50 @@ Resources:
     Properties:
       EmailIdentity: !Ref ReportSenderEmail
 
+  WeeklyReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-weekly-report
+      Description: Gera o relatorio semanal dos feedbacks e o envia por e-mail aos administradores
+      CodeUri: ../weekly-report/target/weekly-report-lambda.jar
+      Handler: com.example.weeklyreport.WeeklyReportHandler::handleRequest
+      MemorySize: 512
+      Timeout: 60
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+      Environment:
+        Variables:
+          DB_URL: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
+          DB_USER: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:username}}'
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:password}}'
+          EMAIL_PROVIDER: ses
+          NOTIFICATION_FROM: !Ref ReportSenderEmail
+          NOTIFICATION_RECIPIENTS: !Join [ ',', !Ref AdminEmails ]
+      Policies:
+        - Statement:
+            - Sid: SendReportFromVerifiedSender
+              Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+              Condition:
+                StringEquals:
+                  ses:FromAddress: !Ref ReportSenderEmail
+      Events:
+        WeeklySchedule:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub ${Environment}-weekly-report-schedule
+            Description: Toda segunda-feira as 08:00 de Sao Paulo, com os feedbacks da semana anterior
+            ScheduleExpression: cron(0 8 ? * MON *)
+            ScheduleExpressionTimezone: America/Sao_Paulo
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 3600
+
 Outputs:
   VpcId:
     Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
@@ -246,3 +294,7 @@ Outputs:
   ReportSenderIdentityName:
     Description: Identidade do Amazon SES usada como remetente do relatorio semanal
     Value: !Ref ReportSenderIdentity
+
+  WeeklyReportFunctionName:
+    Description: Nome da Lambda do relatorio semanal, para invocacao manual e monitoramento
+    Value: !Ref WeeklyReportFunction
