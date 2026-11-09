@@ -270,6 +270,33 @@ Resources:
               MaximumRetryAttempts: 2
               MaximumEventAgeInSeconds: 3600
 
+  NotificationsApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: API interna chamada pelo feedback-service para avisos de feedbacks criticos
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
+
+  CriticalNotificationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-critical-notifications
+      Description: Registra os avisos de feedbacks com urgencia CRITICAL
+      CodeUri: ../critical-notifications/target/critical-notifications-lambda.zip
+      Handler: com.example.criticalnotifications.CriticalNotificationsHandler::handleRequest
+      MemorySize: 1024
+      AutoPublishAlias: live
+      SnapStart:
+        ApplyOn: PublishedVersions
+      Events:
+        Notify:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref NotificationsApi
+            Path: /notifications
+            Method: POST
+
 Outputs:
   VpcId:
     Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
@@ -298,3 +325,11 @@ Outputs:
   WeeklyReportFunctionName:
     Description: Nome da Lambda do relatorio semanal, para invocacao manual e monitoramento
     Value: !Ref WeeklyReportFunction
+
+  NotificationsApiUrl:
+    Description: URL base do critical-notifications, usada como NOTIFICATIONS_URL pelo feedback-service
+    Value: !Sub https://${NotificationsApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+
+  CriticalNotificationsFunctionName:
+    Description: Nome da Lambda do critical-notifications, para consulta dos logs e monitoramento
+    Value: !Ref CriticalNotificationsFunction
