@@ -169,6 +169,48 @@ Resources:
         - Key: Name
           Value: !Sub ${Environment}-fiap-tc4-db-sg
 
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets privadas do PostgreSQL
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-db-subnets
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub ${Environment}-fiap-tc4-db
+      Engine: postgres
+      EngineVersion: '16.13'
+      AutoMinorVersionUpgrade: true
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: '20'
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: feedbacks
+      MasterUsername: feedback_admin
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      EnableCloudwatchLogsExports:
+        - postgresql
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-db
+        - Key: Project
+          Value: fiap-tc-4
+
 Outputs:
   VpcId:
     Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
@@ -181,3 +223,11 @@ Outputs:
   LambdaSecurityGroupId:
     Description: Security group das Lambdas que acessam o banco
     Value: !Ref LambdaSecurityGroup
+
+  DatabaseJdbcUrl:
+    Description: URL JDBC usada como DB_URL pelo feedback-service e pelo weekly-report
+    Value: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
+
+  DatabaseSecretArn:
+    Description: Segredo do Secrets Manager com usuario e senha do banco, gerenciado pelo RDS
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
