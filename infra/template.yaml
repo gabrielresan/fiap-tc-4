@@ -297,6 +297,46 @@ Resources:
             Path: /notifications
             Method: POST
 
+  FeedbackApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: API publica que recebe as avaliacoes dos estudantes
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 20
+
+  FeedbackServiceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-feedback-service
+      Description: Recebe, classifica e grava as avaliacoes; encaminha as criticas ao critical-notifications
+      CodeUri: ../feedback-service/target/feedback-service-lambda.zip
+      Handler: com.example.feedbackservice.FeedbackServiceHandler::handleRequest
+      MemorySize: 1024
+      AutoPublishAlias: live
+      SnapStart:
+        ApplyOn: PublishedVersions
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+      Environment:
+        Variables:
+          DB_URL: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
+          DB_USER: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:username}}'
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:password}}'
+          DB_DDL_AUTO: update
+          NOTIFICATIONS_URL: !Sub https://${NotificationsApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+      Events:
+        SubmitFeedback:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref FeedbackApi
+            Path: /avaliacao
+            Method: POST
+
 Outputs:
   VpcId:
     Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
@@ -333,3 +373,11 @@ Outputs:
   CriticalNotificationsFunctionName:
     Description: Nome da Lambda do critical-notifications, para consulta dos logs e monitoramento
     Value: !Ref CriticalNotificationsFunction
+
+  FeedbackEndpoint:
+    Description: Endpoint publico para envio das avaliacoes (POST com descricao e nota)
+    Value: !Sub https://${FeedbackApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/avaliacao
+
+  FeedbackServiceFunctionName:
+    Description: Nome da Lambda do feedback-service, para consulta dos logs e monitoramento
+    Value: !Ref FeedbackServiceFunction
