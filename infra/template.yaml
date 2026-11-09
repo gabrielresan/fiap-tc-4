@@ -32,6 +32,16 @@ Parameters:
       - 30
     Description: Dias de retencao dos logs no CloudWatch
 
+  GitHubRepository:
+    Type: String
+    Default: gabrielresan/fiap-tc-4
+    Description: Repositorio (dono/nome) cujo GitHub Actions pode fazer o deploy
+
+  GitHubDeployBranch:
+    Type: String
+    Default: main
+    Description: Unica branch autorizada a fazer o deploy pelo GitHub Actions
+
 Globals:
   Function:
     Runtime: java21
@@ -412,6 +422,89 @@ Resources:
             Path: /avaliacao
             Method: POST
 
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Environment}-fiap-tc4-cfn-execution
+      Description: Usada somente pelo CloudFormation para criar e atualizar os recursos da stack
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Environment}-fiap-tc4-github-deploy
+      Description: Assumida pelo GitHub Actions via OIDC; so consegue implantar esta stack pelo CloudFormation
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepository}:ref:refs/heads/${GitHubDeployBranch}
+      Policies:
+        - PolicyName: deploy-through-cloudformation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageThisStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource:
+                  - !Ref AWS::StackId
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/aws-sam-cli-managed-default/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+              - Sid: ValidateTemplates
+                Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+              - Sid: UploadArtifactsToSamBucket
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::aws-sam-cli-managed-default-samclisourcebucket-*
+                  - !Sub arn:${AWS::Partition}:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/*
+              - Sid: HandOverToCloudFormationRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+
 Outputs:
   VpcId:
     Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
@@ -456,3 +549,11 @@ Outputs:
   FeedbackServiceFunctionName:
     Description: Nome da Lambda do feedback-service, para consulta dos logs e monitoramento
     Value: !Ref FeedbackServiceFunction
+
+  GitHubDeployRoleArn:
+    Description: Papel que o GitHub Actions assume via OIDC (role-to-assume do aws-actions/configure-aws-credentials)
+    Value: !GetAtt GitHubDeployRole.Arn
+
+  CloudFormationExecutionRoleArn:
+    Description: Papel passado ao sam deploy com --role-arn no GitHub Actions
+    Value: !GetAtt CloudFormationExecutionRole.Arn
