@@ -21,6 +21,17 @@ Parameters:
     Type: CommaDelimitedList
     Description: E-mails dos administradores que recebem o relatorio semanal, separados por virgula
 
+  LogRetentionInDays:
+    Type: Number
+    Default: 14
+    AllowedValues:
+      - 1
+      - 3
+      - 7
+      - 14
+      - 30
+    Description: Dias de retencao dos logs no CloudWatch
+
 Globals:
   Function:
     Runtime: java21
@@ -190,8 +201,17 @@ Resources:
         - Key: Name
           Value: !Sub ${Environment}-fiap-tc4-db-subnets
 
+  DatabaseLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/rds/instance/${Environment}-fiap-tc4-db/postgresql
+      RetentionInDays: !Ref LogRetentionInDays
+
   Database:
     Type: AWS::RDS::DBInstance
+    DependsOn: DatabaseLogGroup
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
     Properties:
@@ -226,6 +246,14 @@ Resources:
     Properties:
       EmailIdentity: !Ref ReportSenderEmail
 
+  WeeklyReportLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Environment}-weekly-report
+      RetentionInDays: !Ref LogRetentionInDays
+
   WeeklyReportFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -235,6 +263,9 @@ Resources:
       Handler: com.example.weeklyreport.WeeklyReportHandler::handleRequest
       MemorySize: 512
       Timeout: 60
+      LoggingConfig:
+        LogFormat: Text
+        LogGroup: !Ref WeeklyReportLogGroup
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
@@ -270,6 +301,14 @@ Resources:
               MaximumRetryAttempts: 2
               MaximumEventAgeInSeconds: 3600
 
+  NotificationsApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /fiap-tc4/${Environment}/api/notifications
+      RetentionInDays: !Ref LogRetentionInDays
+
   NotificationsApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -277,6 +316,17 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 10
         ThrottlingRateLimit: 5
+      AccessLogSettings:
+        DestinationArn: !GetAtt NotificationsApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
+
+  CriticalNotificationsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Environment}-critical-notifications
+      RetentionInDays: !Ref LogRetentionInDays
 
   CriticalNotificationsFunction:
     Type: AWS::Serverless::Function
@@ -286,6 +336,9 @@ Resources:
       CodeUri: ../critical-notifications/target/critical-notifications-lambda.zip
       Handler: com.example.criticalnotifications.CriticalNotificationsHandler::handleRequest
       MemorySize: 1024
+      LoggingConfig:
+        LogFormat: Text
+        LogGroup: !Ref CriticalNotificationsLogGroup
       AutoPublishAlias: live
       SnapStart:
         ApplyOn: PublishedVersions
@@ -297,6 +350,14 @@ Resources:
             Path: /notifications
             Method: POST
 
+  FeedbackApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /fiap-tc4/${Environment}/api/feedback
+      RetentionInDays: !Ref LogRetentionInDays
+
   FeedbackApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -304,6 +365,17 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 50
         ThrottlingRateLimit: 20
+      AccessLogSettings:
+        DestinationArn: !GetAtt FeedbackApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
+
+  FeedbackServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Environment}-feedback-service
+      RetentionInDays: !Ref LogRetentionInDays
 
   FeedbackServiceFunction:
     Type: AWS::Serverless::Function
@@ -313,6 +385,9 @@ Resources:
       CodeUri: ../feedback-service/target/feedback-service-lambda.zip
       Handler: com.example.feedbackservice.FeedbackServiceHandler::handleRequest
       MemorySize: 1024
+      LoggingConfig:
+        LogFormat: Text
+        LogGroup: !Ref FeedbackServiceLogGroup
       AutoPublishAlias: live
       SnapStart:
         ApplyOn: PublishedVersions
