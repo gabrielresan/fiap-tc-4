@@ -26,14 +26,17 @@ Banco e envio ficam atrás de interfaces (`FeedbackRepository`, `ConnectionProvi
 
 ## Dados lidos
 
-A função apenas **lê** a tabela `feedbacks`; a escrita é responsabilidade do serviço de ingestão. Esquema esperado (`src/test/resources/schema.sql`):
+A função apenas **lê** a tabela `feedbacks`. O esquema pertence ao `feedback-service`, que grava as avaliações e cria a tabela a partir de `FeedbackEntity`. O arquivo `src/test/resources/schema.sql` reproduz esse esquema para os testes e a execução local; se a entidade mudar, ele deve ser atualizado.
 
 | Coluna | Tipo | Observação |
 | --- | --- | --- |
+| `id` | `UUID` | Chave primária; não é lida pelo relatório. |
 | `description` | `TEXT` | Obrigatória. |
 | `rating` | `SMALLINT` | De 0 a 10. |
-| `urgency` | `VARCHAR(10)` | `LOW`, `MEDIUM` ou `CRITICAL`, definida pela ingestão. |
+| `urgency` | `VARCHAR(10)` | `LOW`, `MEDIUM` ou `CRITICAL`, classificada pelo `feedback-service` (0 a 3, 4 a 6 e 7 a 10). |
 | `submitted_at` | `TIMESTAMPTZ` | Data de envio; indexada. |
+
+Como a tabela é criada pelo `feedback-service` na primeira inicialização, ele precisa ter sido implantado antes da primeira execução do relatório.
 
 ## Conteúdo do relatório
 
@@ -46,12 +49,12 @@ As descrições são escapadas antes de entrar no HTML, impedindo injeção de c
 
 ## Configuração
 
-As variáveis de SMTP e de destinatários são as mesmas do módulo `critical-notifications`.
+As variáveis de banco seguem os mesmos nomes do `feedback-service`. O envio por SMTP é próprio deste módulo: localmente usa o Mailpit; na AWS, o SMTP do Amazon SES.
 
 | Variável | Padrão | Uso |
 | --- | --- | --- |
 | `DB_URL` | obrigatório | URL JDBC do PostgreSQL. |
-| `DB_USER` | obrigatório | Usuário do banco (somente leitura). |
+| `DB_USER` | obrigatório | Usuário do banco (basta permissão de leitura). |
 | `DB_PASSWORD` | obrigatório | Senha do banco. |
 | `NOTIFICATION_FROM` | obrigatório | E-mail remetente. |
 | `NOTIFICATION_RECIPIENTS` | obrigatório | E-mails dos administradores, separados por vírgula. |
@@ -87,6 +90,20 @@ O e-mail gerado pode ser visto em http://localhost:8025. Para encerrar e apagar 
 docker compose -f weekly-report/docker-compose.yml down -v
 ```
 
+### Com os dados do `feedback-service`
+
+Para gerar o relatório a partir das avaliações gravadas pelo `feedback-service` local (banco na porta `55433`), suba apenas o Mailpit deste módulo e aponte as variáveis de banco para aquele PostgreSQL. As variáveis de ambiente têm prioridade sobre os padrões locais:
+
+```powershell
+docker compose -f weekly-report/docker-compose.yml up -d mailpit
+$env:DB_URL = 'jdbc:postgresql://localhost:55433/feedbacks'
+$env:DB_USER = 'feedback_service'
+$env:DB_PASSWORD = 'feedback_service'
+mvn -f weekly-report/pom.xml -q test-compile exec:java
+```
+
+O relatório considera apenas a semana anterior; avaliações enviadas na semana corrente aparecem no relatório da próxima segunda-feira.
+
 ## Empacotamento para a Lambda
 
 ```sh
@@ -103,4 +120,4 @@ Gera `weekly-report/target/weekly-report-lambda.jar` com todas as dependências.
 
 ## Integração com o Tech Challenge
 
-Lê os feedbacks gravados pelo serviço de ingestão e usa a mesma configuração de e-mail do módulo `critical-notifications`, sem depender do código de outros módulos. Ainda pendentes: provisionamento na AWS (Lambda, agendamento, RDS, SES), autenticação IAM no banco, deploy automatizado e alarmes de monitoramento.
+Lê os feedbacks gravados pelo `feedback-service` no mesmo PostgreSQL, sem depender do código de outros módulos. Ao contrário do `critical-notifications`, que registra os avisos críticos em log, o relatório é entregue por e-mail. Ainda pendentes: provisionamento na AWS (Lambda, agendamento, RDS, SES), credenciais do banco via Secrets Manager, deploy automatizado e alarmes de monitoramento.

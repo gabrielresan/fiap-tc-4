@@ -7,12 +7,15 @@ import com.example.weeklyreport.model.Feedback;
 import com.example.weeklyreport.model.ReportPeriod;
 import com.example.weeklyreport.model.WeeklyReport;
 import com.example.weeklyreport.publisher.ReportPublisher;
+import com.example.weeklyreport.publisher.SesReportPublisher;
 import com.example.weeklyreport.publisher.SmtpReportPublisher;
 import com.example.weeklyreport.publisher.SmtpSettings;
 import com.example.weeklyreport.repository.FeedbackRepository;
 import com.example.weeklyreport.repository.JdbcFeedbackRepository;
 import com.example.weeklyreport.repository.PasswordConnectionProvider;
 import com.example.weeklyreport.service.WeeklyReportGenerator;
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
+import software.amazon.awssdk.services.sesv2.SesV2Client;
 
 import java.time.Clock;
 import java.util.List;
@@ -37,8 +40,21 @@ public class WeeklyReportHandler implements RequestHandler<Map<String, Object>, 
                         required(env, "DB_URL"), required(env, "DB_USER"), required(env, "DB_PASSWORD"))),
                 new WeeklyReportGenerator(),
                 new HtmlReportFormatter(),
-                new SmtpReportPublisher(SmtpSettings.fromEnvironment(env)),
+                publisher(env),
                 clock);
+    }
+
+    static ReportPublisher publisher(Map<String, String> env) {
+        SmtpSettings settings = SmtpSettings.fromEnvironment(env);
+        String provider = env.getOrDefault("EMAIL_PROVIDER", "smtp");
+        return switch (provider.toLowerCase(Locale.ROOT)) {
+            case "smtp" -> new SmtpReportPublisher(settings);
+            case "ses" -> new SesReportPublisher(
+                    SesV2Client.builder().httpClient(UrlConnectionHttpClient.create()).build(),
+                    settings.from(),
+                    settings.recipients());
+            default -> throw new IllegalStateException("EMAIL_PROVIDER must be smtp or ses, got " + provider);
+        };
     }
 
     public WeeklyReportHandler(FeedbackRepository repository, WeeklyReportGenerator generator,

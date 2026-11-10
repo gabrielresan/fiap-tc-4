@@ -1,0 +1,559 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Tech Challenge 4 - plataforma de feedback (feedback-service, critical-notifications e weekly-report)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Nome do ambiente, usado como prefixo dos recursos
+
+  ReportSenderEmail:
+    Type: String
+    AllowedPattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
+    ConstraintDescription: deve ser um endereco de e-mail valido
+    Description: Remetente do relatorio semanal; o Amazon SES envia um link de verificacao para ele
+
+  AdminEmails:
+    Type: CommaDelimitedList
+    Description: E-mails dos administradores que recebem o relatorio semanal, separados por virgula
+
+  LogRetentionInDays:
+    Type: Number
+    Default: 14
+    AllowedValues:
+      - 1
+      - 3
+      - 7
+      - 14
+      - 30
+    Description: Dias de retencao dos logs no CloudWatch
+
+  GitHubRepository:
+    Type: String
+    Default: gabrielresan/fiap-tc-4
+    Description: Repositorio (dono/nome) cujo GitHub Actions pode fazer o deploy
+
+  GitHubDeployBranch:
+    Type: String
+    Default: main
+    Description: Unica branch autorizada a fazer o deploy pelo GitHub Actions
+
+Globals:
+  Function:
+    Runtime: java21
+    Architectures:
+      - x86_64
+    Timeout: 30
+    MemorySize: 512
+    Tags:
+      Project: fiap-tc-4
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-vpc
+        - Key: Project
+          Value: fiap-tc-4
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-igw
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-public-a
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-private-a
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-private-b
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-public-rt
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  NatGatewayElasticIp:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-nat-eip
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayElasticIp.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-nat
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-private-rt
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambdas que acessam o banco; sem entrada, saida liberada via NAT
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-lambda-sg
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL acessivel apenas pelas Lambdas da VPC
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: PostgreSQL a partir das Lambdas
+          IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-db-sg
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets privadas do PostgreSQL
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-db-subnets
+
+  DatabaseLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/rds/instance/${Environment}-fiap-tc4-db/postgresql
+      RetentionInDays: !Ref LogRetentionInDays
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DependsOn: DatabaseLogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub ${Environment}-fiap-tc4-db
+      Engine: postgres
+      EngineVersion: '16.13'
+      AutoMinorVersionUpgrade: true
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: '20'
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: feedbacks
+      MasterUsername: feedback_admin
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      EnableCloudwatchLogsExports:
+        - postgresql
+      Tags:
+        - Key: Name
+          Value: !Sub ${Environment}-fiap-tc4-db
+        - Key: Project
+          Value: fiap-tc-4
+
+  ReportSenderIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref ReportSenderEmail
+
+  WeeklyReportLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Environment}-weekly-report
+      RetentionInDays: !Ref LogRetentionInDays
+
+  WeeklyReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-weekly-report
+      Description: Gera o relatorio semanal dos feedbacks e o envia por e-mail aos administradores
+      CodeUri: ../weekly-report/target/weekly-report-lambda.jar
+      Handler: com.example.weeklyreport.WeeklyReportHandler::handleRequest
+      MemorySize: 512
+      Timeout: 60
+      LoggingConfig:
+        LogFormat: Text
+        LogGroup: !Ref WeeklyReportLogGroup
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+      Environment:
+        Variables:
+          DB_URL: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
+          DB_USER: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:username}}'
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:password}}'
+          EMAIL_PROVIDER: ses
+          NOTIFICATION_FROM: !Ref ReportSenderEmail
+          NOTIFICATION_RECIPIENTS: !Join [ ',', !Ref AdminEmails ]
+      Policies:
+        - Statement:
+            - Sid: SendReportFromVerifiedSender
+              Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+              Condition:
+                StringEquals:
+                  ses:FromAddress: !Ref ReportSenderEmail
+      Events:
+        WeeklySchedule:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub ${Environment}-weekly-report-schedule
+            Description: Toda segunda-feira as 08:00 de Sao Paulo, com os feedbacks da semana anterior
+            ScheduleExpression: cron(0 8 ? * MON *)
+            ScheduleExpressionTimezone: America/Sao_Paulo
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 3600
+
+  NotificationsApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /fiap-tc4/${Environment}/api/notifications
+      RetentionInDays: !Ref LogRetentionInDays
+
+  NotificationsApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: API interna chamada pelo feedback-service para avisos de feedbacks criticos
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
+      AccessLogSettings:
+        DestinationArn: !GetAtt NotificationsApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
+
+  CriticalNotificationsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Environment}-critical-notifications
+      RetentionInDays: !Ref LogRetentionInDays
+
+  CriticalNotificationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-critical-notifications
+      Description: Registra os avisos de feedbacks com urgencia CRITICAL
+      CodeUri: ../critical-notifications/target/critical-notifications-lambda.zip
+      Handler: com.example.criticalnotifications.CriticalNotificationsHandler::handleRequest
+      MemorySize: 1024
+      LoggingConfig:
+        LogFormat: Text
+        LogGroup: !Ref CriticalNotificationsLogGroup
+      AutoPublishAlias: live
+      SnapStart:
+        ApplyOn: PublishedVersions
+      Events:
+        Notify:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref NotificationsApi
+            Path: /notifications
+            Method: POST
+
+  FeedbackApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /fiap-tc4/${Environment}/api/feedback
+      RetentionInDays: !Ref LogRetentionInDays
+
+  FeedbackApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: API publica que recebe as avaliacoes dos estudantes
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 20
+      AccessLogSettings:
+        DestinationArn: !GetAtt FeedbackApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","routeKey":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
+
+  FeedbackServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${Environment}-feedback-service
+      RetentionInDays: !Ref LogRetentionInDays
+
+  FeedbackServiceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${Environment}-feedback-service
+      Description: Recebe, classifica e grava as avaliacoes; encaminha as criticas ao critical-notifications
+      CodeUri: ../feedback-service/target/feedback-service-lambda.zip
+      Handler: com.example.feedbackservice.FeedbackServiceHandler::handleRequest
+      MemorySize: 1024
+      LoggingConfig:
+        LogFormat: Text
+        LogGroup: !Ref FeedbackServiceLogGroup
+      AutoPublishAlias: live
+      SnapStart:
+        ApplyOn: PublishedVersions
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+      Environment:
+        Variables:
+          DB_URL: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
+          DB_USER: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:username}}'
+          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:password}}'
+          DB_DDL_AUTO: update
+          NOTIFICATIONS_URL: !Sub https://${NotificationsApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+      Events:
+        SubmitFeedback:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref FeedbackApi
+            Path: /avaliacao
+            Method: POST
+
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Environment}-fiap-tc4-cfn-execution
+      Description: Usada somente pelo CloudFormation para criar e atualizar os recursos da stack
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Environment}-fiap-tc4-github-deploy
+      Description: Assumida pelo GitHub Actions via OIDC; so consegue implantar esta stack pelo CloudFormation
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepository}:ref:refs/heads/${GitHubDeployBranch}
+      Policies:
+        - PolicyName: deploy-through-cloudformation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageThisStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource:
+                  - !Ref AWS::StackId
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/aws-sam-cli-managed-default/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+              - Sid: ValidateTemplates
+                Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+              - Sid: UploadArtifactsToSamBucket
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::aws-sam-cli-managed-default-samclisourcebucket-*
+                  - !Sub arn:${AWS::Partition}:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/*
+              - Sid: HandOverToCloudFormationRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+
+Outputs:
+  VpcId:
+    Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
+    Value: !Ref Vpc
+
+  PrivateSubnetIds:
+    Description: Subnets privadas usadas pelo RDS e pelas Lambdas
+    Value: !Join [ ',', [ !Ref PrivateSubnetA, !Ref PrivateSubnetB ] ]
+
+  LambdaSecurityGroupId:
+    Description: Security group das Lambdas que acessam o banco
+    Value: !Ref LambdaSecurityGroup
+
+  DatabaseJdbcUrl:
+    Description: URL JDBC usada como DB_URL pelo feedback-service e pelo weekly-report
+    Value: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
+
+  DatabaseSecretArn:
+    Description: Segredo do Secrets Manager com usuario e senha do banco, gerenciado pelo RDS
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+
+  ReportSenderIdentityName:
+    Description: Identidade do Amazon SES usada como remetente do relatorio semanal
+    Value: !Ref ReportSenderIdentity
+
+  WeeklyReportFunctionName:
+    Description: Nome da Lambda do relatorio semanal, para invocacao manual e monitoramento
+    Value: !Ref WeeklyReportFunction
+
+  NotificationsApiUrl:
+    Description: URL base do critical-notifications, usada como NOTIFICATIONS_URL pelo feedback-service
+    Value: !Sub https://${NotificationsApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+
+  CriticalNotificationsFunctionName:
+    Description: Nome da Lambda do critical-notifications, para consulta dos logs e monitoramento
+    Value: !Ref CriticalNotificationsFunction
+
+  FeedbackEndpoint:
+    Description: Endpoint publico para envio das avaliacoes (POST com descricao e nota)
+    Value: !Sub https://${FeedbackApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/avaliacao
+
+  FeedbackServiceFunctionName:
+    Description: Nome da Lambda do feedback-service, para consulta dos logs e monitoramento
+    Value: !Ref FeedbackServiceFunction
+
+  GitHubDeployRoleArn:
+    Description: Papel que o GitHub Actions assume via OIDC (role-to-assume do aws-actions/configure-aws-credentials)
+    Value: !GetAtt GitHubDeployRole.Arn
+
+  CloudFormationExecutionRoleArn:
+    Description: Papel passado ao sam deploy com --role-arn no GitHub Actions
+    Value: !GetAtt CloudFormationExecutionRole.Arn
