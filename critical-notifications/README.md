@@ -64,6 +64,25 @@ java -jar critical-notifications/target/critical-notifications-0.0.1-SNAPSHOT.ja
 
 Os testes verificam filtro de urgência, validação HTTP, conteúdo e datas do aviso, registro em logs e escape de quebras de linha. Não dependem de SMTP ou Docker.
 
+## Execução na AWS Lambda
+
+O mesmo controller recebe eventos do API Gateway HTTP API (payload 2.0) na Lambda. O handler ativa o perfil `lambda` e inicializa o Spring uma vez por instância. A execução local continua usando o Tomcat embutido.
+
+```sh
+mvn -f critical-notifications/pom.xml clean verify
+```
+
+Use o pacote `critical-notifications/target/critical-notifications-lambda.zip` para configurar a função.
+
+| Configuração | Valor |
+| --- | --- |
+| Runtime | Java 21 |
+| Handler | `com.example.criticalnotifications.CriticalNotificationsHandler::handleRequest` |
+| Integração | API Gateway HTTP API, payload 2.0 |
+| Rota | `POST /notifications` |
+
+O `feedback-service` deve receber a URL base da API em `NOTIFICATIONS_URL`. Uma avaliação crítica deve gerar o evento `critical_notification` nos logs da função. O corpo da requisição e as respostas HTTP são os mesmos da execução local.
+
 ## Tech Challenge
 
-A entrega por e-mail foi substituída por simulação em logs por decisão do grupo. Esta etapa não entrega avisos à caixa de entrada dos administradores. A implantação cloud/serverless, o deploy automatizado, a coleta dos logs e o controle de acesso entre serviços continuam pendentes. O endpoint atual não implementa autenticação.
+Os avisos ficam registrados em logs. Ainda faltam o provisionamento em AWS, o deploy automatizado, o controle de acesso entre serviços e a configuração de alertas para os administradores.
