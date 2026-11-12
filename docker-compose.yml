@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: feedbacks
+      POSTGRES_USER: feedback_service
+      POSTGRES_PASSWORD: feedback_service
+    volumes:
+      - feedback-data:/var/lib/postgresql/data
+      - ./weekly-report/src/test/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./weekly-report/local/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "feedback_service", "-d", "feedbacks"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  critical-notifications:
+    build:
+      context: .
+      dockerfile: critical-notifications/Dockerfile
+    ports:
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD", "timeout", "2", "bash", "-c", "true < /dev/tcp/127.0.0.1/8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  feedback-service:
+    build:
+      context: .
+      dockerfile: feedback-service/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      critical-notifications:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/feedbacks
+      DB_USER: feedback_service
+      DB_PASSWORD: feedback_service
+      DB_DDL_AUTO: validate
+      NOTIFICATIONS_URL: http://critical-notifications:8081
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "timeout", "2", "bash", "-c", "true < /dev/tcp/127.0.0.1/8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  weekly-report:
+    build:
+      context: .
+      dockerfile: weekly-report/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/feedbacks
+      DB_USER: feedback_service
+      DB_PASSWORD: feedback_service
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      NOTIFICATION_FROM: reports@example.com
+      NOTIFICATION_RECIPIENTS: admin@example.com
+    ports:
+      - "127.0.0.1:8082:8080"
+
+volumes:
+  feedback-data:
