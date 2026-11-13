@@ -48,11 +48,33 @@ Parameters:
     AllowedValues: ['true', 'false']
     Description: Cria o provedor e os papeis de deploy via GitHub OIDC
 
-  EnableNatGateway:
+  NeonDbUrl:
     Type: String
-    Default: 'true'
+    AllowedPattern: '^jdbc:postgresql://[a-zA-Z0-9.-]+(:5432)?/[a-zA-Z0-9_-]+[?]sslmode=verify-full$'
+    ConstraintDescription: use uma URL JDBC sem credenciais e com sslmode=verify-full
+    Description: URL JDBC do PostgreSQL na Neon
+
+  NeonDbUser:
+    Type: String
+    MinLength: 1
+    Description: Usuario PostgreSQL da Neon
+
+  NeonDbPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: Senha PostgreSQL da Neon
+
+  DeploymentRevision:
+    Type: String
+    MinLength: 1
+    Description: Identificador novo para publicar a versao do feedback-service a cada deploy
+
+  KeepLegacyRds:
+    Type: String
+    Default: 'false'
     AllowedValues: ['true', 'false']
-    Description: Cria o NAT Gateway e a rota de internet das sub-redes privadas
+    Description: Mantem o RDS antigo durante a validacao da migracao
 
   ServicesEnabled:
     Type: String
@@ -62,7 +84,7 @@ Parameters:
 
 Conditions:
   CreateGitHubOidc: !Equals [!Ref EnableGitHubOidc, 'true']
-  NatEnabled: !Equals [!Ref EnableNatGateway, 'true']
+  KeepLegacyDatabase: !Equals [!Ref KeepLegacyRds, 'true']
   RunServices: !Equals [!Ref ServicesEnabled, 'true']
 
 Globals:
@@ -78,6 +100,7 @@ Globals:
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
+    Condition: KeepLegacyDatabase
     Properties:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
@@ -88,32 +111,9 @@ Resources:
         - Key: Project
           Value: fiap-tc-4
 
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-igw
-
-  InternetGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref Vpc
-      InternetGatewayId: !Ref InternetGateway
-
-  PublicSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: 10.0.0.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-public-a
-
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
+    Condition: KeepLegacyDatabase
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: 10.0.10.0/24
@@ -124,6 +124,7 @@ Resources:
 
   PrivateSubnetB:
     Type: AWS::EC2::Subnet
+    Condition: KeepLegacyDatabase
     Properties:
       VpcId: !Ref Vpc
       CidrBlock: 10.0.11.0/24
@@ -132,78 +133,9 @@ Resources:
         - Key: Name
           Value: !Sub ${Environment}-fiap-tc4-private-b
 
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref Vpc
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-public-rt
-
-  PublicDefaultRoute:
-    Type: AWS::EC2::Route
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  PublicSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet
-      RouteTableId: !Ref PublicRouteTable
-
-  NatGatewayElasticIp:
-    Type: AWS::EC2::EIP
-    Condition: NatEnabled
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-nat-eip
-
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Condition: NatEnabled
-    Properties:
-      AllocationId: !GetAtt NatGatewayElasticIp.AllocationId
-      SubnetId: !Ref PublicSubnet
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-nat
-
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref Vpc
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-private-rt
-
-  PrivateDefaultRoute:
-    Type: AWS::EC2::Route
-    Condition: NatEnabled
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
-
-  PrivateSubnetARouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnetA
-      RouteTableId: !Ref PrivateRouteTable
-
-  PrivateSubnetBRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnetB
-      RouteTableId: !Ref PrivateRouteTable
-
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    Condition: KeepLegacyDatabase
     Properties:
       GroupDescription: Lambdas que acessam o banco; sem entrada, saida liberada via NAT
       VpcId: !Ref Vpc
@@ -213,6 +145,7 @@ Resources:
 
   DatabaseSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    Condition: KeepLegacyDatabase
     Properties:
       GroupDescription: PostgreSQL acessivel apenas pelas Lambdas da VPC
       VpcId: !Ref Vpc
@@ -228,6 +161,7 @@ Resources:
 
   DatabaseSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
+    Condition: KeepLegacyDatabase
     Properties:
       DBSubnetGroupDescription: Subnets privadas do PostgreSQL
       SubnetIds:
@@ -239,6 +173,7 @@ Resources:
 
   DatabaseLogGroup:
     Type: AWS::Logs::LogGroup
+    Condition: KeepLegacyDatabase
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
     Properties:
@@ -247,6 +182,7 @@ Resources:
 
   Database:
     Type: AWS::RDS::DBInstance
+    Condition: KeepLegacyDatabase
     DependsOn: DatabaseLogGroup
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
@@ -303,21 +239,16 @@ Resources:
       LoggingConfig:
         LogFormat: Text
         LogGroup: !Ref WeeklyReportLogGroup
-      VpcConfig:
-        SecurityGroupIds:
-          - !Ref LambdaSecurityGroup
-        SubnetIds:
-          - !Ref PrivateSubnetA
-          - !Ref PrivateSubnetB
       Environment:
         Variables:
-          DB_URL: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
-          DB_USER: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:username}}'
-          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:password}}'
+          DB_URL: !Sub '${NeonDbUrl}&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory'
+          DB_USER: !Ref NeonDbUser
+          DB_PASSWORD: !Ref NeonDbPassword
           EMAIL_PROVIDER: ses
           NOTIFICATION_FROM: !Ref ReportSenderEmail
           NOTIFICATION_RECIPIENTS: !Join [ ',', !Ref AdminEmails ]
       Policies:
+        - !If [KeepLegacyDatabase, AWSLambdaVPCAccessExecutionRole, !Ref 'AWS::NoValue']
         - Statement:
             - Sid: SendReportFromVerifiedSender
               Effect: Allow
@@ -429,21 +360,18 @@ Resources:
         LogFormat: Text
         LogGroup: !Ref FeedbackServiceLogGroup
       AutoPublishAlias: live
+      AutoPublishCodeSha256: !Ref DeploymentRevision
       SnapStart:
         ApplyOn: PublishedVersions
-      VpcConfig:
-        SecurityGroupIds:
-          - !Ref LambdaSecurityGroup
-        SubnetIds:
-          - !Ref PrivateSubnetA
-          - !Ref PrivateSubnetB
       Environment:
         Variables:
-          DB_URL: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
-          DB_USER: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:username}}'
-          DB_PASSWORD: !Sub '{{resolve:secretsmanager:${Database.MasterUserSecret.SecretArn}:SecretString:password}}'
+          DB_URL: !Sub '${NeonDbUrl}&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory'
+          DB_USER: !Ref NeonDbUser
+          DB_PASSWORD: !Ref NeonDbPassword
           DB_DDL_AUTO: update
           NOTIFICATIONS_URL: !Sub https://${NotificationsApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+      Policies:
+        - !If [KeepLegacyDatabase, AWSLambdaVPCAccessExecutionRole, !Ref 'AWS::NoValue']
       Events:
         SubmitFeedback:
           Type: HttpApi
@@ -539,26 +467,6 @@ Resources:
                     iam:PassedToService: cloudformation.amazonaws.com
 
 Outputs:
-  VpcId:
-    Description: VPC onde ficam o RDS e as Lambdas que acessam o banco
-    Value: !Ref Vpc
-
-  PrivateSubnetIds:
-    Description: Subnets privadas usadas pelo RDS e pelas Lambdas
-    Value: !Join [ ',', [ !Ref PrivateSubnetA, !Ref PrivateSubnetB ] ]
-
-  LambdaSecurityGroupId:
-    Description: Security group das Lambdas que acessam o banco
-    Value: !Ref LambdaSecurityGroup
-
-  DatabaseJdbcUrl:
-    Description: URL JDBC usada como DB_URL pelo feedback-service e pelo weekly-report
-    Value: !Sub jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/feedbacks
-
-  DatabaseSecretArn:
-    Description: Segredo do Secrets Manager com usuario e senha do banco, gerenciado pelo RDS
-    Value: !GetAtt Database.MasterUserSecret.SecretArn
-
   ReportSenderIdentityName:
     Description: Identidade do Amazon SES usada como remetente do relatorio semanal
     Value: !Ref ReportSenderIdentity

@@ -120,4 +120,4 @@ Gera `weekly-report/target/weekly-report-lambda.jar` com todas as dependências.
 
 ## Integração com o Tech Challenge
 
-Lê os feedbacks gravados pelo `feedback-service` no mesmo PostgreSQL, sem depender do código de outros módulos. Ao contrário do `critical-notifications`, que registra os avisos críticos em log, o relatório é entregue por e-mail. Ainda pendentes: provisionamento na AWS (Lambda, agendamento, RDS, SES), credenciais do banco via Secrets Manager, deploy automatizado e alarmes de monitoramento.
+Lê os feedbacks gravados pelo `feedback-service` no mesmo PostgreSQL, sem depender do código de outros módulos. Na AWS, lê o banco na Neon e entrega o relatório por e-mail via Amazon SES. Veja a [configuração do deploy](../infra/README.md).
