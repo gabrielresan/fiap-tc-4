@@ -22,7 +22,7 @@ Na AWS, os três módulos rodam em funções Lambda e o banco fica na Neon. O Ev
 | [critical-notifications](critical-notifications/README.md) | Envia avisos de avaliações críticas por e-mail na AWS. |
 | [weekly-report](weekly-report/README.md) | Gera e envia o relatório da semana anterior. |
 
-O [guia de infraestrutura](infra/README.md) cobre o deploy manual pelo GitHub Actions, a configuração da Neon, os testes na AWS e a pausa do ambiente.
+O [guia de infraestrutura](infra/README.md) cobre o deploy automático a cada push na `main`, a configuração da Neon, os testes na AWS e a pausa do ambiente.
 
 ## Executar localmente com Docker
 

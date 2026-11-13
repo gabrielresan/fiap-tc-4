@@ -150,7 +150,7 @@ Para validar o aviso crítico, confirme o e-mail com descrição, urgência e da
 
 ### Com o usuário IAM do projeto AWS
 
-O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três módulos e usa o SAM para criar ou atualizar a stack `fiap-tc4-dev`. O deploy é disparado manualmente na `main` pelo botão **Run workflow**. A região padrão é Ohio (`us-east-2`).
+O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três módulos e usa o SAM para criar ou atualizar a stack `fiap-tc4-dev`. Cada push na `main`, inclusive o merge de um PR, dispara o workflow. A região padrão é Ohio (`us-east-2`).
 
 1. Na conta e região do projeto, prepare um bucket S3 privado para os pacotes e um papel de serviço que o CloudFormation possa assumir. A política precisa cobrir os recursos do template. [Papéis de serviço do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
 2. Autorize o usuário da pipeline a acessar o prefixo `fiap-tc4-dev/` do bucket, criar e executar *change sets* da stack e consultar seu andamento, e usar `iam:PassRole` somente para o papel de execução do CloudFormation. A política de atualização de uma Lambda é insuficiente para criar a stack.
@@ -169,7 +169,7 @@ O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três m
    | Secret | `NEON_DB_USER` | Usuário selecionado em **Connect** na Neon. |
    | Secret | `NEON_DB_PASSWORD` | Senha desse usuário. |
 
-4. Em **Actions → Deploy dos três serviços na AWS → Run workflow**, selecione `main`.
+4. Após um push ou merge na `main`, acompanhe a execução em **Actions → Deploy dos três serviços na AWS**. Para disparar manualmente, clique em **Run workflow** e selecione `main`.
 5. Envie uma avaliação e confira se ela aparece na Neon. Teste o relatório e confira o envio pelo SES.
 
 ### Pausar e reativar o ambiente de desenvolvimento
