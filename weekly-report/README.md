@@ -15,7 +15,8 @@ Erros de banco ou de envio são propagados e a execução é marcada como falha 
 
 | Classe | Responsabilidade |
 | --- | --- |
-| `WeeklyReportHandler` | Ponto de entrada da Lambda; apenas orquestra as etapas. |
+| `WeeklyReportHandler` | Ponto de entrada da Lambda. Configura as dependências e devolve a resposta da execução. |
+| `WeeklyReportService` | Consulta as avaliações da semana anterior, gera o relatório e solicita o envio. |
 | `ReportPeriod` | Define a semana anterior no fuso de São Paulo. |
 | `JdbcFeedbackRepository` | Consulta os feedbacks do período no PostgreSQL. |
 | `WeeklyReportGenerator` | Calcula média, contagem por dia e por urgência. |
@@ -97,6 +98,8 @@ O relatório lê a mesma base local do `feedback-service`. Ele considera apenas 
 Execute `mvn -f weekly-report/pom.xml test` com o Docker ativo. Os testes de integração usam PostgreSQL e Mailpit com Testcontainers.
 
 Na [coleção Postman local](../postman/fiap-tc-4-local.postman_collection.json), execute a pasta **Weekly report** com o Compose da raiz ativo. A requisição invoca a função pelo emulador e o e-mail fica no Mailpit.
+
+Envie `{"responseFormat":"json"}` para receber `periodStart`, `periodEnd`, `feedbackCount` e `averageRating`. Uma invocação com `{}` retorna o resumo textual. Se a função lançar uma exceção, a invocação direta da AWS sinaliza a falha em `X-Amz-Function-Error`.
 
 ## Execução na AWS Lambda
 

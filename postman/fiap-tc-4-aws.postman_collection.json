@@ -77,7 +77,7 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('Status 200', () => pm.response.to.have.status(200));",
-              "pm.test('Aviso processado', () => pm.expect(pm.response.json().logged).to.eql(true));"
+              "pm.test('Aviso processado', () => pm.expect(pm.response.json().processed).to.eql(true));"
             ]
           }
         }
@@ -147,7 +147,11 @@
               "pm.test('Status 200', () => pm.response.to.have.status(200));",
               "pm.test('Lambda concluiu sem erro', () => pm.expect(pm.response.headers.has('X-Amz-Function-Error')).to.eql(false));",
               "pm.test('Relatório enviado', () => {",
-              "    pm.expect(pm.response.json()).to.be.a('string').and.include('Weekly report sent:');",
+              "    const result = pm.response.json();",
+              "    pm.expect(result.periodStart).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+              "    pm.expect(result.periodEnd).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+              "    pm.expect(result.feedbackCount).to.be.a('number');",
+              "    pm.expect(result.averageRating).to.be.a('number');",
               "});"
             ]
           }
@@ -192,7 +196,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{}",
+          "raw": "{\n  \"responseFormat\": \"json\"\n}",
           "options": {
             "raw": {
               "language": "json"

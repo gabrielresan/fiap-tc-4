@@ -66,7 +66,7 @@ A avaliação é gravada **antes** da notificação. Se o `critical-notification
 | --- | --- |
 | `FeedbackServiceHandler` | Ponto de entrada da Lambda; repassa os eventos do API Gateway à aplicação Spring. |
 | `FeedbackController` | Recebe `POST /avaliacao` e converte entrada e saída. |
-| `ApiExceptionHandler` | Responde 400 em `problem+json` para entradas inválidas. |
+| `ApiExceptionHandler` | Padroniza os erros HTTP em `application/problem+json` com um campo `code`, como `INVALID_REQUEST` para entradas inválidas. |
 | `FeedbackService` | Orquestra classificação, gravação e notificação. |
 | `UrgencyClassifier` | Converte a nota em urgência, segundo `UrgencyThresholds`. |
 | `FeedbackRepository` / `FeedbackEntity` | Grava na tabela `feedbacks` com Spring Data JPA. |

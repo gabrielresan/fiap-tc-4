@@ -19,12 +19,12 @@ Todos os campos são obrigatórios. A descrição não pode ser vazia. A nota de
 
 | HTTP | Resposta | Significado |
 | --- | --- | --- |
-| 200 | `{"logged":true}` | Feedback crítico processado. No modo SES, o serviço aceitou o e-mail para envio. |
-| 200 | `{"logged":false}` | Feedback LOW ou MEDIUM; nenhum aviso registrado. |
+| 200 | `{"processed":true,"logged":true}` | Feedback crítico processado. No modo SES, o serviço aceitou o e-mail para envio. |
+| 200 | `{"processed":false,"logged":false}` | Feedback LOW ou MEDIUM. |
 | 400 | `application/problem+json` | JSON inválido ou campos inválidos/ausentes. |
 | 502 | `application/problem+json` | Falha ao enviar o aviso pelo SES. |
 
-O campo `logged` indica que o aviso foi processado. No modo local, o registro inclui descrição, urgência, data original do feedback (`submittedAt`) e data do registro (`loggedAt`).
+Use `processed` para ler o resultado. O campo `logged` tem o mesmo valor para clientes existentes. Os erros HTTP usam `application/problem+json` com `code`, como `INVALID_REQUEST` ou `NOTIFICATION_DELIVERY_FAILED`. No modo local, o registro inclui descrição, urgência, data original do feedback (`submittedAt`) e data do registro (`loggedAt`).
 
 ```text
 critical_notification description=Aula indisponível urgency=CRITICAL submittedAt=2026-11-06T12:00:00Z loggedAt=2026-11-06T12:01:00Z

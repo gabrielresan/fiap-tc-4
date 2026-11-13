@@ -1,35 +1,28 @@
 package br.com.fiap.tc4.reporting;
 
+import br.com.fiap.tc4.reporting.dto.WeeklyReportResponse;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
-import br.com.fiap.tc4.reporting.formatter.HtmlReportFormatter;
-import br.com.fiap.tc4.reporting.model.Feedback;
-import br.com.fiap.tc4.reporting.model.ReportPeriod;
-import br.com.fiap.tc4.reporting.model.WeeklyReport;
-import br.com.fiap.tc4.reporting.publisher.ReportPublisher;
-import br.com.fiap.tc4.reporting.publisher.SesReportPublisher;
-import br.com.fiap.tc4.reporting.publisher.SmtpReportPublisher;
-import br.com.fiap.tc4.reporting.publisher.SmtpSettings;
+import br.com.fiap.tc4.reporting.integration.formatting.HtmlReportFormatter;
+import br.com.fiap.tc4.reporting.integration.email.ReportPublisher;
+import br.com.fiap.tc4.reporting.integration.email.SesReportPublisher;
+import br.com.fiap.tc4.reporting.integration.email.SmtpReportPublisher;
+import br.com.fiap.tc4.reporting.integration.email.SmtpSettings;
 import br.com.fiap.tc4.reporting.repository.FeedbackRepository;
 import br.com.fiap.tc4.reporting.repository.JdbcFeedbackRepository;
 import br.com.fiap.tc4.reporting.repository.PasswordConnectionProvider;
 import br.com.fiap.tc4.reporting.service.WeeklyReportGenerator;
+import br.com.fiap.tc4.reporting.service.WeeklyReportService;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.services.sesv2.SesV2Client;
 
 import java.time.Clock;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 
-public class WeeklyReportHandler implements RequestHandler<Map<String, Object>, String> {
+public class WeeklyReportHandler implements RequestHandler<Map<String, Object>, Object> {
 
-    private final FeedbackRepository repository;
-    private final WeeklyReportGenerator generator;
-    private final HtmlReportFormatter formatter;
-    private final ReportPublisher publisher;
-    private final Clock clock;
+    private final WeeklyReportService service;
 
     public WeeklyReportHandler() {
         this(System.getenv(), Clock.systemUTC());
@@ -59,35 +52,23 @@ public class WeeklyReportHandler implements RequestHandler<Map<String, Object>, 
 
     public WeeklyReportHandler(FeedbackRepository repository, WeeklyReportGenerator generator,
                                HtmlReportFormatter formatter, ReportPublisher publisher, Clock clock) {
-        this.repository = Objects.requireNonNull(repository, "repository must not be null");
-        this.generator = Objects.requireNonNull(generator, "generator must not be null");
-        this.formatter = Objects.requireNonNull(formatter, "formatter must not be null");
-        this.publisher = Objects.requireNonNull(publisher, "publisher must not be null");
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
+        this.service = new WeeklyReportService(repository, generator, formatter, publisher, clock);
     }
 
     @Override
-    public String handleRequest(Map<String, Object> input, Context context) {
-        return run();
+    public Object handleRequest(Map<String, Object> input, Context context) {
+        WeeklyReportResponse response = sendReport();
+        return input != null && "json".equals(input.get("responseFormat")) ? response : response.summary();
     }
 
     public String run() {
-        ReportPeriod period = ReportPeriod.previousWeek(clock);
-        log("Generating weekly report from " + period.startDate() + " to " + period.endDate().minusDays(1));
-
-        List<Feedback> feedbacks = repository.findSubmittedWithin(period);
-        WeeklyReport report = generator.generate(feedbacks, period);
-        publisher.publish(formatter.format(report));
-
-        String summary = String.format(Locale.ROOT,
-                "Weekly report sent: period=%s..%s, feedbacks=%d, averageRating=%.2f",
-                period.startDate(), period.endDate().minusDays(1), report.totalFeedbacks(), report.averageRating());
-        log(summary);
-        return summary;
+        return sendReport().summary();
     }
 
-    private static void log(String message) {
-        System.out.println("[weekly-report] " + message);
+    private WeeklyReportResponse sendReport() {
+        WeeklyReportResponse response = WeeklyReportResponse.from(service.sendPreviousWeek());
+        System.out.println("[weekly-report] " + response.summary());
+        return response;
     }
 
     private static String required(Map<String, String> env, String name) {
