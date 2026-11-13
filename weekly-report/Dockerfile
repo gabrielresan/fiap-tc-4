@@ -8,4 +8,4 @@ RUN mvn -B -ntp package -DskipTests
 FROM public.ecr.aws/lambda/java:21
 COPY --from=build /workspace/target/weekly-report-lambda.jar /var/task/lib/
 
-CMD ["com.example.weeklyreport.WeeklyReportHandler::handleRequest"]
+CMD ["br.com.fiap.tc4.reporting.WeeklyReportHandler::handleRequest"]

@@ -7,9 +7,9 @@ Função serverless (AWS Lambda, Java 21) que gera o **relatório semanal dos fe
 1. Calcula o período: a semana anterior, de segunda 00:00 a domingo 23:59, no fuso `America/Sao_Paulo`.
 2. Lê no PostgreSQL os feedbacks enviados nesse período.
 3. Calcula total, média das notas, quantidade por dia e quantidade por urgência.
-4. Monta um e-mail em HTML e o envia por SMTP.
+4. Monta um e-mail em HTML e o envia pelo Amazon SES na AWS ou pelo Mailpit via SMTP no ambiente local.
 
-Erros de banco ou de envio não são tratados silenciosamente: a exceção é propagada para que a execução seja marcada como falha na Lambda e dispare o alarme de monitoramento.
+Erros de banco ou de envio são propagados e a execução é marcada como falha na Lambda.
 
 ## Responsabilidades
 
@@ -20,7 +20,8 @@ Erros de banco ou de envio não são tratados silenciosamente: a exceção é pr
 | `JdbcFeedbackRepository` | Consulta os feedbacks do período no PostgreSQL. |
 | `WeeklyReportGenerator` | Calcula média, contagem por dia e por urgência. |
 | `HtmlReportFormatter` | Gera o assunto e o corpo HTML do e-mail. |
-| `SmtpReportPublisher` | Envia o e-mail por SMTP. |
+| `SesReportPublisher` | Envia o e-mail pela API do Amazon SES. |
+| `SmtpReportPublisher` | Envia o e-mail por SMTP na execução local. |
 
 Banco e envio ficam atrás de interfaces (`FeedbackRepository`, `ConnectionProvider`, `ReportPublisher`), o que permite testar a orquestração sem infraestrutura e trocar a autenticação do banco na AWS sem alterar o restante.
 
@@ -33,7 +34,7 @@ A função apenas **lê** a tabela `feedbacks`. O esquema pertence ao `feedback-
 | `id` | `UUID` | Chave primária; não é lida pelo relatório. |
 | `description` | `TEXT` | Obrigatória. |
 | `rating` | `SMALLINT` | De 0 a 10. |
-| `urgency` | `VARCHAR(10)` | `LOW`, `MEDIUM` ou `CRITICAL`, classificada pelo `feedback-service` (0 a 3, 4 a 6 e 7 a 10). |
+| `urgency` | `VARCHAR(10)` | Classificada pelo `feedback-service`. Por padrão, `CRITICAL` de 0 a 3, `MEDIUM` de 4 a 6 e `LOW` de 7 a 10. |
 | `submitted_at` | `TIMESTAMPTZ` | Data de envio; indexada. |
 
 Como a tabela é criada pelo `feedback-service` na primeira inicialização, ele precisa ter sido implantado antes da primeira execução do relatório.
@@ -49,7 +50,7 @@ As descrições são escapadas antes de entrar no HTML, impedindo injeção de c
 
 ## Configuração
 
-As variáveis de banco seguem os mesmos nomes do `feedback-service`. O envio por SMTP é próprio deste módulo: localmente usa o Mailpit; na AWS, o SMTP do Amazon SES.
+As variáveis de banco seguem os mesmos nomes do `feedback-service`. Na AWS, o SAM configura o envio pela API do SES com o papel IAM da Lambda.
 
 | Variável | Padrão | Uso |
 | --- | --- | --- |
@@ -58,6 +59,7 @@ As variáveis de banco seguem os mesmos nomes do `feedback-service`. O envio por
 | `DB_PASSWORD` | obrigatório | Senha do banco. |
 | `NOTIFICATION_FROM` | obrigatório | E-mail remetente. |
 | `NOTIFICATION_RECIPIENTS` | obrigatório | E-mails dos administradores, separados por vírgula. |
+| `EMAIL_PROVIDER` | `smtp` | Use `smtp` para Mailpit local e `ses` para a API do Amazon SES. |
 | `SMTP_HOST` | `localhost` | Servidor SMTP. |
 | `SMTP_PORT` | `1025` | Porta SMTP. |
 | `SMTP_USERNAME` | vazio | Usuário SMTP. |
@@ -67,44 +69,36 @@ As variáveis de banco seguem os mesmos nomes do `feedback-service`. O envio por
 
 A função falha na inicialização se faltar alguma variável obrigatória ou se algum endereço de e-mail for inválido. Conexões SMTP têm timeout de cinco segundos.
 
-## Testes
-
-Requer Docker em execução (os testes de banco e de e-mail sobem PostgreSQL e Mailpit com Testcontainers).
-
-```sh
-mvn -f weekly-report/pom.xml test
-```
-
 ## Execução local
 
-O `docker-compose.yml` sobe PostgreSQL (porta `55432`, com o esquema e feedbacks de exemplo da semana anterior) e Mailpit (SMTP em `1025`, interface em `8025`).
+### Ambiente integrado
+
+Use o [Compose da raiz](../README.md#executar-localmente-com-docker). O emulador da Lambda fica em `http://localhost:8082` e o Mailpit em `http://localhost:8025`.
+
+### Execução com Maven
+
+Na raiz do repositório, suba o PostgreSQL compartilhado (porta `55433`) e o Mailpit (SMTP em `1025`, interface em `8025`). Na primeira inicialização, o PostgreSQL carrega avaliações de exemplo da semana anterior.
 
 ```sh
-docker compose -f weekly-report/docker-compose.yml up -d
+docker compose up -d --wait postgres mailpit
 mvn -f weekly-report/pom.xml -q test-compile exec:java
 ```
 
-O e-mail gerado pode ser visto em http://localhost:8025. Para encerrar e apagar os dados:
+O e-mail gerado pode ser visto em http://localhost:8025. Para parar as dependências e preservar os dados:
 
 ```sh
-docker compose -f weekly-report/docker-compose.yml down -v
+docker compose stop postgres mailpit
 ```
 
-### Com os dados do `feedback-service`
+O relatório lê a mesma base local do `feedback-service`. Ele considera apenas a semana anterior. Avaliações enviadas na semana corrente aparecem no relatório da próxima segunda-feira.
 
-Para gerar o relatório a partir das avaliações gravadas pelo `feedback-service` local (banco na porta `55433`), suba apenas o Mailpit deste módulo e aponte as variáveis de banco para aquele PostgreSQL. As variáveis de ambiente têm prioridade sobre os padrões locais:
+## Testes
 
-```powershell
-docker compose -f weekly-report/docker-compose.yml up -d mailpit
-$env:DB_URL = 'jdbc:postgresql://localhost:55433/feedbacks'
-$env:DB_USER = 'feedback_service'
-$env:DB_PASSWORD = 'feedback_service'
-mvn -f weekly-report/pom.xml -q test-compile exec:java
-```
+Execute `mvn -f weekly-report/pom.xml test` com o Docker ativo. Os testes de integração usam PostgreSQL e Mailpit com Testcontainers.
 
-O relatório considera apenas a semana anterior; avaliações enviadas na semana corrente aparecem no relatório da próxima segunda-feira.
+Na [coleção Postman local](../postman/fiap-tc-4-local.postman_collection.json), execute a pasta **Weekly report** com o Compose da raiz ativo. A requisição invoca a função pelo emulador e o e-mail fica no Mailpit.
 
-## Empacotamento para a Lambda
+## Execução na AWS Lambda
 
 ```sh
 mvn -f weekly-report/pom.xml clean package
@@ -115,8 +109,8 @@ Gera `weekly-report/target/weekly-report-lambda.jar` com todas as dependências.
 | Configuração da Lambda | Valor |
 | --- | --- |
 | Runtime | Java 21 |
-| Handler | `com.example.weeklyreport.WeeklyReportHandler::handleRequest` |
-| Gatilho | Agendamento semanal (ex.: segunda-feira 08:00, `America/Sao_Paulo`) |
+| Handler | `br.com.fiap.tc4.reporting.WeeklyReportHandler::handleRequest` |
+| Gatilho | EventBridge Scheduler, segunda-feira às 09:00 (`America/Sao_Paulo`) |
 
 ## Integração com o Tech Challenge
 

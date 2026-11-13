@@ -1,6 +1,6 @@
 # Critical notifications
 
-API REST independente em Java 21 e Spring Boot 4.1.2 para receber feedbacks de outros serviços e registrar nos logs os avisos de urgência `CRITICAL`. A entrega de e-mail é simulada por logs, sem servidor SMTP, credenciais ou destinatários configurados.
+API REST em Java 21 e Spring Boot 4.1.2. Recebe avaliações do `feedback-service` e registra os avisos de urgência `CRITICAL` nos logs. Na AWS, os registros ficam no CloudWatch Logs.
 
 ## Endpoint
 
@@ -33,7 +33,13 @@ Quebras de linha e tabulações da descrição são escapadas para manter o avis
 
 Não há persistência, deduplicação ou retentativa interna: cada chamada crítica registra um novo aviso.
 
-## Execução
+## Execução local
+
+### Ambiente integrado
+
+Use o [Compose da raiz](../README.md#executar-localmente-com-docker). A API fica em `http://localhost:8081`.
+
+### Execução com Maven
 
 O módulo tem aplicação, porta e dependências próprias, sem depender da aplicação raiz ou do weekly-report. A única variável opcional é `PORT` (padrão `8081`). Não exige servidor de e-mail ou variáveis `SMTP_*`/`NOTIFICATION_*`.
 
@@ -62,7 +68,11 @@ mvn -f critical-notifications/pom.xml clean verify
 java -jar critical-notifications/target/critical-notifications-0.0.1-SNAPSHOT.jar
 ```
 
-Os testes verificam filtro de urgência, validação HTTP, conteúdo e datas do aviso, registro em logs e escape de quebras de linha. Não dependem de SMTP ou Docker.
+## Testes
+
+Execute `mvn -f critical-notifications/pom.xml test` para verificar o filtro de urgência, a validação HTTP e o registro dos avisos. Os testes Maven deste módulo dispensam SMTP e Docker.
+
+Na [coleção Postman local](../postman/fiap-tc-4-local.postman_collection.json), execute a pasta **Critical notifications** para testar a rota `POST /notifications`.
 
 ## Execução na AWS Lambda
 
@@ -77,12 +87,10 @@ Use o pacote `critical-notifications/target/critical-notifications-lambda.zip` p
 | Configuração | Valor |
 | --- | --- |
 | Runtime | Java 21 |
-| Handler | `com.example.criticalnotifications.CriticalNotificationsHandler::handleRequest` |
+| Handler | `br.com.fiap.tc4.notifications.CriticalNotificationsHandler::handleRequest` |
 | Integração | API Gateway HTTP API, payload 2.0 |
 | Rota | `POST /notifications` |
 
 O `feedback-service` deve receber a URL base da API em `NOTIFICATIONS_URL`. Uma avaliação crítica deve gerar o evento `critical_notification` nos logs da função. O corpo da requisição e as respostas HTTP são os mesmos da execução local.
 
-## Tech Challenge
-
-Os avisos ficam registrados em logs. Ainda faltam o provisionamento em AWS, o deploy automatizado, o controle de acesso entre serviços e a configuração de alertas para os administradores.
+Veja o [guia de deploy e operação](../infra/README.md) para testar o fluxo completo na AWS.

@@ -111,7 +111,7 @@ Resources:
       FunctionName: !Sub ${Environment}-weekly-report
       Description: Gera o relatorio semanal dos feedbacks e o envia por e-mail aos administradores
       CodeUri: ../weekly-report/target/weekly-report-lambda.jar
-      Handler: com.example.weeklyreport.WeeklyReportHandler::handleRequest
+      Handler: br.com.fiap.tc4.reporting.WeeklyReportHandler::handleRequest
       MemorySize: 512
       Timeout: 60
       LoggingConfig:
@@ -181,7 +181,7 @@ Resources:
       FunctionName: !Sub ${Environment}-critical-notifications
       Description: Registra os avisos de feedbacks com urgencia CRITICAL
       CodeUri: ../critical-notifications/target/critical-notifications-lambda.zip
-      Handler: com.example.criticalnotifications.CriticalNotificationsHandler::handleRequest
+      Handler: br.com.fiap.tc4.notifications.CriticalNotificationsHandler::handleRequest
       MemorySize: 1024
       LoggingConfig:
         LogFormat: Text
@@ -231,7 +231,7 @@ Resources:
       FunctionName: !Sub ${Environment}-feedback-service
       Description: Recebe, classifica e grava as avaliacoes; encaminha as criticas ao critical-notifications
       CodeUri: ../feedback-service/target/feedback-service-lambda.zip
-      Handler: com.example.feedbackservice.FeedbackServiceHandler::handleRequest
+      Handler: br.com.fiap.tc4.feedback.FeedbackServiceHandler::handleRequest
       MemorySize: 1024
       LoggingConfig:
         LogFormat: Text

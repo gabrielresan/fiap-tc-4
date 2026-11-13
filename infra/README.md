@@ -2,17 +2,9 @@
 
 O template AWS SAM cria as três Lambdas, as APIs, o agendamento, os logs e os papéis de acesso. O PostgreSQL fica na Neon. As Lambdas usam a rede padrão da AWS para acessar a Neon, o SES e a API de notificações.
 
-## Arquitetura
+## Funções e gatilhos
 
-```mermaid
-flowchart LR
-    cliente -->|POST /avaliacao| api[API de avaliações] --> feedback[feedback-service]
-    feedback -->|grava| neon[(PostgreSQL na Neon)]
-    feedback -->|POST /notifications| notificacoes[API de notificações] --> critical[critical-notifications]
-    agenda[EventBridge Scheduler] --> report[weekly-report]
-    report -->|lê| neon
-    report --> ses[Amazon SES]
-```
+Veja o fluxo entre os módulos no [README do projeto](../README.md#arquitetura).
 
 | Função | Gatilho | Responsabilidade |
 | --- | --- | --- |
@@ -33,7 +25,7 @@ Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
 | APIs | 2 HTTP APIs do API Gateway | Pública com limite de 20 req/s (pico 50); interna com 5 req/s (pico 10). Ambas com log de acesso. |
 | Agendamento | EventBridge Scheduler (`ScheduleV2`) | Até 2 novas tentativas em caso de falha, dentro de 1 hora. |
 | Logs | 5 grupos no CloudWatch Logs | Um por função e um por API, com retenção configurável (padrão 14 dias). |
-| CI/CD | Provedor OIDC do GitHub, papel de deploy, papel de execução do CloudFormation | Deploy pelo GitHub Actions sem chaves de acesso. |
+| CI/CD | Bucket S3 de artefatos e papel de execução do CloudFormation | O workflow atual usa um usuário IAM. O template também oferece suporte a OIDC. |
 
 ## Segurança e governança de acesso
 
@@ -70,7 +62,7 @@ Os e-mails não ficam no repositório: são informados no comando de deploy ou c
 - Credenciais da AWS configuradas (`aws configure`) com permissão para criar os recursos acima. Teste com `aws sts get-caller-identity`.
 - Um alerta de orçamento no AWS Budgets, para acompanhar o consumo de créditos.
 
-## Deploy
+## Deploy manual pelo terminal
 
 Execute a partir da raiz do repositório.
 
@@ -94,28 +86,41 @@ Execute a partir da raiz do repositório.
 3. Carregue os três valores da Neon nas variáveis de ambiente `NEON_DB_URL`, `NEON_DB_USER` e `NEON_DB_PASSWORD` e execute o deploy.
 
    ```sh
-   sam deploy --parameter-overrides Environment=dev ReportSenderEmail=remetente@exemplo.com AdminEmails=admin@exemplo.com \
+   sam deploy --parameter-overrides Environment=dev EnableGitHubOidc=false \
+     ReportSenderEmail=remetente@exemplo.com AdminEmails=admin@exemplo.com \
      "NeonDbUrl=$NEON_DB_URL" "NeonDbUser=$NEON_DB_USER" "NeonDbPassword=$NEON_DB_PASSWORD" \
      "DeploymentRevision=$(date -u +%Y%m%dT%H%M%S)"
    ```
 
-   As demais opções (nome da stack `fiap-tc4-dev`, região `us-east-1`, bucket de artefatos e confirmação do *change set*) estão em `samconfig.toml`. O SAM envia os pacotes ao S3, mostra o que será criado e pede confirmação.
+   O exemplo usa `EnableGitHubOidc=false`, como o workflow atual. O `samconfig.toml` define a stack `fiap-tc4-dev`, a região `us-east-2`, a resolução do bucket de artefatos e a confirmação do *change set*. O SAM envia os pacotes ao S3 e mostra as alterações para revisão.
 
 4. Abra o e-mail de verificação enviado pela AWS ao `ReportSenderEmail` e clique no link. Enquanto a conta estiver no *sandbox* do SES, cada destinatário diferente do remetente também precisa ser verificado:
 
    ```sh
-   aws sesv2 create-email-identity --email-identity admin@exemplo.com
+   aws sesv2 create-email-identity --region us-east-2 --email-identity admin@exemplo.com
    ```
 
 5. Consulte os outputs (URL da API, nomes das funções, ARNs dos papéis):
 
    ```sh
-   aws cloudformation describe-stacks --stack-name fiap-tc4-dev --query "Stacks[0].Outputs" --output table
+   aws cloudformation describe-stacks --region us-east-2 --stack-name fiap-tc4-dev --query "Stacks[0].Outputs" --output table
    ```
 
 No primeiro deploy, o SnapStart inicializa o `feedback-service` para gerar a imagem da função; nesse momento o Hibernate cria a tabela `feedbacks` no banco.
 
 ## Teste após o deploy
+
+### Postman
+
+Importe a [coleção FIAP Tech Challenge 4 — AWS dev](../postman/fiap-tc-4-aws.postman_collection.json). Ela vem com os endereços do deploy de desenvolvimento em Ohio. Se a stack for recriada, abra **CloudFormation → fiap-tc4-dev → Saídas** e atualize `feedbackEndpoint`, `notificationsApiUrl` e `weeklyReportFunctionName` com os valores de `FeedbackEndpoint`, `NotificationsApiUrl` e `WeeklyReportFunctionName`.
+
+- **Cadastrar avaliação crítica** grava uma avaliação de teste na Neon. Confira o aviso no CloudWatch para validar o encaminhamento.
+- **Registrar aviso direto** chama a API de notificações e confere se ela respondeu com `logged: true`.
+- **Enviar relatório semanal** invoca a Lambda e pode enviar um e-mail real aos destinatários configurados. Execute essa requisição separadamente quando quiser testar o envio.
+
+Para a requisição do relatório, crie o ambiente **FIAP AWS** no Postman e selecione-o no canto superior direito. Adicione `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` como variáveis sensíveis e preencha apenas os valores locais. Use uma identidade autorizada a executar `lambda:InvokeFunction` em `dev-weekly-report`. Se usar credenciais temporárias, adicione também `AWS_SESSION_TOKEN` ao ambiente e informe `{{AWS_SESSION_TOKEN}}` no campo **Session Token** da aba **Authorization**. [Ambientes do Postman](https://learning.postman.com/docs/use/send-requests/variables/managing-environments) · [AWS Signature no Postman](https://learning.postman.com/docs/use/send-requests/authorization/aws-signature/) · [Permissão para invocar a Lambda](https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html)
+
+### Terminal
 
 Enviar uma avaliação crítica (PowerShell), usando o output `FeedbackEndpoint`:
 
@@ -127,23 +132,23 @@ Invoke-RestMethod -Method Post -Uri '<FeedbackEndpoint>' -ContentType 'applicati
 Acompanhar o aviso crítico e as requisições:
 
 ```sh
-aws logs tail /aws/lambda/dev-critical-notifications --since 10m
-aws logs tail /fiap-tc4/dev/api/feedback --since 10m
+aws logs tail /aws/lambda/dev-critical-notifications --region us-east-2 --since 10m
+aws logs tail /fiap-tc4/dev/api/feedback --region us-east-2 --since 10m
 ```
 
 Executar o relatório semanal sem esperar a segunda-feira:
 
 ```sh
-aws lambda invoke --function-name dev-weekly-report response.json
+aws lambda invoke --region us-east-2 --function-name dev-weekly-report response.json
 ```
 
 O relatório considera a semana anterior; avaliações da semana corrente aparecem no relatório da próxima segunda-feira.
 
-## Deploy automatizado (GitHub Actions)
+## Deploy pelo GitHub Actions
 
 ### Com o usuário IAM do projeto AWS
 
-O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três módulos e usa o SAM para criar ou atualizar a stack `fiap-tc4-dev`. Ele roda manualmente na `main`. A região padrão do workflow é Ohio (`us-east-2`).
+O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três módulos e usa o SAM para criar ou atualizar a stack `fiap-tc4-dev`. O deploy é disparado manualmente na `main` pelo botão **Run workflow**. A região padrão é Ohio (`us-east-2`).
 
 1. Na conta e região do projeto, prepare um bucket S3 privado para os pacotes e um papel de serviço que o CloudFormation possa assumir. A política precisa cobrir os recursos do template. [Papéis de serviço do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
 2. Autorize o usuário da pipeline a acessar o prefixo `fiap-tc4-dev/` do bucket, criar e executar *change sets* da stack e consultar seu andamento, e usar `iam:PassRole` somente para o papel de execução do CloudFormation. A política de atualização de uma Lambda é insuficiente para criar a stack.
@@ -177,20 +182,20 @@ A Neon controla o próprio banco. As URLs continuam disponíveis e requisições
 
 ### Com OIDC
 
-O primeiro deploy, feito localmente, cria os papéis usados pelo GitHub Actions. A partir daí, o workflow precisa de:
+Para usar OIDC, faça o primeiro deploy local com `EnableGitHubOidc=true` e permissões para criar o provedor e os papéis. Depois, adapte o workflow para usar:
 
 - `permissions: id-token: write` e `contents: read`;
-- `aws-actions/configure-aws-credentials` com `role-to-assume` igual ao output `GitHubDeployRoleArn` e `aws-region: us-east-1`;
+- `aws-actions/configure-aws-credentials` com `role-to-assume` igual ao output `GitHubDeployRoleArn` e `aws-region: us-east-2`;
 - build dos três módulos com Maven;
 - `sam deploy --no-confirm-changeset --role-arn <CloudFormationExecutionRoleArn> --parameter-overrides ...`, executado em `infra/`.
 
-Apenas pushes na branch `main` do repositório configurado conseguem assumir o papel de deploy.
+O papel de deploy aceita tokens do repositório e da branch configurados no template. Por padrão, a branch é `main`.
 
 ## Remoção
 
 ```sh
 cd infra
-sam delete
+sam delete --region us-east-2
 ```
 
 Remove a stack da AWS. A Neon e o bucket de artefatos são gerenciados fora dela.

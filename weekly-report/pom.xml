@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.example</groupId>
+    <groupId>br.com.fiap.tc4</groupId>
     <artifactId>weekly-report</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>jar</packaging>
@@ -121,7 +121,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.6.4</version>
                 <configuration>
-                    <mainClass>com.example.weeklyreport.LocalRun</mainClass>
+                    <mainClass>br.com.fiap.tc4.reporting.LocalRun</mainClass>
                     <classpathScope>test</classpathScope>
                 </configuration>
             </plugin>
