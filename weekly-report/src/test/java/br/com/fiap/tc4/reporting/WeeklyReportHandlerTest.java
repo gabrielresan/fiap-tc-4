@@ -1,10 +1,11 @@
 package br.com.fiap.tc4.reporting;
 
-import br.com.fiap.tc4.reporting.publisher.SmtpReportPublisher;
+import br.com.fiap.tc4.reporting.dto.WeeklyReportResponse;
+import br.com.fiap.tc4.reporting.integration.email.SmtpReportPublisher;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import br.com.fiap.tc4.reporting.exception.FeedbackRepositoryException;
 import br.com.fiap.tc4.reporting.exception.ReportPublishingException;
-import br.com.fiap.tc4.reporting.formatter.HtmlReportFormatter;
+import br.com.fiap.tc4.reporting.integration.formatting.HtmlReportFormatter;
 import br.com.fiap.tc4.reporting.model.Feedback;
 import br.com.fiap.tc4.reporting.model.ReportEmail;
 import br.com.fiap.tc4.reporting.model.ReportPeriod;
@@ -69,9 +70,17 @@ class WeeklyReportHandlerTest {
 
     @Test
     void handleRequestIgnoresSchedulerPayload() {
-        String summary = handler(repository).handleRequest(Map.of("source", "aws.scheduler"), null);
+        Object summary = handler(repository).handleRequest(Map.of("source", "aws.scheduler"), null);
 
-        assertTrue(summary.startsWith("Weekly report sent"));
+        assertTrue(assertInstanceOf(String.class, summary).startsWith("Weekly report sent"));
+        assertEquals(1, sentEmails.size());
+    }
+
+    @Test
+    void returnsStructuredResultWhenRequested() {
+        Object response = handler(repository).handleRequest(Map.of("responseFormat", "json"), null);
+
+        assertEquals(new WeeklyReportResponse("2026-10-26", "2026-11-01", 2, 6.5), response);
         assertEquals(1, sentEmails.size());
     }
 

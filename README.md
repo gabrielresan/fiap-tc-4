@@ -24,6 +24,8 @@ Na AWS, os três módulos rodam em funções Lambda e o banco fica na Neon. O Ev
 
 O [guia de infraestrutura](infra/README.md) cobre o deploy automático a cada push na `main`, a configuração da Neon, os testes na AWS e a pausa do ambiente.
 
+Nos serviços HTTP, `controller` recebe as requisições, `dto` define as entradas e saídas, e `service` executa os casos de uso. `model` reúne os tipos de negócio, `repository` trata o banco e `integration` reúne as chamadas a outros serviços. Os erros da aplicação são tratados em `exception` e retornam `application/problem+json` com um campo `code`. No relatório semanal, a entrada é o handler da Lambda acionado pelo agendador.
+
 ## Executar localmente com Docker
 
 Abra o Docker Desktop e aguarde o Docker iniciar. Depois, abra um terminal na raiz do repositório, onde está o [`docker-compose.yml`](docker-compose.yml). O Compose já inclui as variáveis locais e os Dockerfiles fazem o build dos módulos. Você pode executar sem criar um arquivo `.env` ou configurar credenciais da AWS, da Neon ou do SES.
