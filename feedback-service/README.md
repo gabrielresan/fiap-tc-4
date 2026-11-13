@@ -192,14 +192,14 @@ O zip não inclui o Tomcat, pois na Lambda as requisições chegam pelo containe
 | Memória | 1024 MB ou mais (mais memória também dá mais CPU e acelera a inicialização) |
 | SnapStart | Recomendado: a inicialização do Spring leva de 8 a 10 s sem ele |
 
-Na Lambda, `DB_URL`, `DB_USER`, `DB_PASSWORD` e `NOTIFICATIONS_URL` são obrigatórias. Como no `weekly-report`, a função falha na inicialização se alguma estiver ausente. As demais variáveis de [Configuração](#configuração) continuam opcionais. As credenciais do banco devem vir do Secrets Manager.
+Na Lambda, `DB_URL`, `DB_USER`, `DB_PASSWORD` e `NOTIFICATIONS_URL` são obrigatórias. Como no `weekly-report`, a função falha na inicialização se alguma estiver ausente. As demais variáveis de [Configuração](#configuração) continuam opcionais. O deploy injeta a conexão Neon a partir dos secrets do GitHub Actions.
 
 O perfil `lambda` (`application-lambda.properties`):
 
 - Ativa o container serverless no lugar do Tomcat. Fora da Lambda, ele fica desativado por `spring.autoconfigure.exclude` em `application.properties`.
-- Limita o pool de conexões a uma conexão, pois cada instância atende uma requisição por vez. Isso também evita esgotar as conexões do RDS quando a Lambda escala; com muitas instâncias simultâneas, recomenda-se o RDS Proxy.
+- Limita o pool a uma conexão por instância da Lambda para reduzir o número de conexões ao PostgreSQL.
 - Desativa o banner e reduz avisos de log. Os logs vão para o stdout, que a Lambda envia ao CloudWatch Logs.
 
-Para a Lambda acessar o RDS, ela precisa estar na mesma VPC. Nesse caso, chamar o `critical-notifications` ou outros serviços da AWS exige NAT Gateway ou VPC endpoints.
+A função acessa a Neon via TLS e chama a API do `critical-notifications` pela rede padrão do Lambda. Veja a [configuração do deploy](../infra/README.md).
 
 Em produção, após a criação inicial da tabela, recomenda-se `DB_DDL_AUTO=validate`, para evitar a verificação de DDL em cada inicialização a frio.

@@ -1,37 +1,17 @@
 # Infraestrutura (AWS SAM)
 
-Infraestrutura como código da plataforma de feedback, descrita em um único template AWS SAM (`template.yaml`, CloudFormation). Um deploy cria rede, banco, as três funções Lambda, as APIs, o agendamento do relatório, os logs e os papéis de acesso. Um `sam delete` remove tudo.
+O template AWS SAM cria as três Lambdas, as APIs, o agendamento, os logs e os papéis de acesso. O PostgreSQL fica na Neon. As Lambdas usam a rede padrão da AWS para acessar a Neon, o SES e a API de notificações.
 
 ## Arquitetura
 
 ```mermaid
 flowchart LR
-    estudante([Estudante]) -->|POST /avaliacao| feedbackApi[API pública<br/>HTTP API]
-    feedbackApi --> feedback[Lambda<br/>feedback-service]
-
-    subgraph vpc[VPC 10.0.0.0/16]
-        subgraph privada[Subnets privadas]
-            feedback
-            report[Lambda<br/>weekly-report]
-            rds[(RDS PostgreSQL 16<br/>feedbacks)]
-        end
-        nat[NAT Gateway<br/>subnet pública]
-    end
-
-    feedback -->|grava| rds
-    report -->|lê| rds
-    feedback -.->|saída| nat
-    report -.->|saída| nat
-    nat -->|POST /notifications| notificationsApi[API interna<br/>HTTP API]
-    notificationsApi --> critical[Lambda<br/>critical-notifications]
-    critical --> logs[(CloudWatch Logs)]
-
-    scheduler[EventBridge Scheduler<br/>segunda 09:00 São Paulo] --> report
-    nat --> ses[Amazon SES]
-    ses -->|relatório semanal| admin([Administradores])
-
-    secrets[(Secrets Manager<br/>senha do banco)] -.->|deploy| feedback
-    secrets -.->|deploy| report
+    cliente -->|POST /avaliacao| api[API de avaliações] --> feedback[feedback-service]
+    feedback -->|grava| neon[(PostgreSQL na Neon)]
+    feedback -->|POST /notifications| notificacoes[API de notificações] --> critical[critical-notifications]
+    agenda[EventBridge Scheduler] --> report[weekly-report]
+    report -->|lê| neon
+    report --> ses[Amazon SES]
 ```
 
 | Função | Gatilho | Responsabilidade |
@@ -46,23 +26,20 @@ Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
 
 | Grupo | Recursos | Observação |
 | --- | --- | --- |
-| Rede | VPC, 1 subnet pública, 2 subnets privadas em zonas diferentes, Internet Gateway, NAT Gateway, tabelas de rota | Banco e Lambdas com acesso ao banco ficam nas subnets privadas; o NAT dá a elas saída para a internet. |
-| Security groups | `lambda-sg`, `db-sg` | O banco aceita a porta 5432 apenas de recursos no `lambda-sg`. Nenhuma regra de entrada vinda da internet. |
-| Banco | RDS PostgreSQL 16.13, `db.t4g.micro`, 20 GB gp3 | Privado, criptografado em disco, SSL obrigatório (padrão do PostgreSQL 16 no RDS), 1 dia de backup. |
-| Segredos | Segredo do RDS no Secrets Manager | Senha gerada e guardada pela AWS (`ManageMasterUserPassword`); não aparece no template nem no Git. |
+| Banco | PostgreSQL na Neon | Criado fora da stack, com acesso JDBC via TLS. |
+| Credenciais | GitHub Actions Secrets | O deploy configura a conexão nas variáveis das funções. |
 | E-mail | Identidade do Amazon SES (`ReportSenderEmail`) | O SES envia um link de verificação no primeiro deploy. |
 | Funções | 3 `AWS::Serverless::Function` (Java 21) | `feedback-service` e `critical-notifications` com 1024 MB e SnapStart; `weekly-report` com 512 MB e 60 s. |
 | APIs | 2 HTTP APIs do API Gateway | Pública com limite de 20 req/s (pico 50); interna com 5 req/s (pico 10). Ambas com log de acesso. |
 | Agendamento | EventBridge Scheduler (`ScheduleV2`) | Até 2 novas tentativas em caso de falha, dentro de 1 hora. |
-| Logs | 6 grupos no CloudWatch Logs | Um por função, um por API e um para o PostgreSQL, com retenção configurável (padrão 14 dias). |
+| Logs | 5 grupos no CloudWatch Logs | Um por função e um por API, com retenção configurável (padrão 14 dias). |
 | CI/CD | Provedor OIDC do GitHub, papel de deploy, papel de execução do CloudFormation | Deploy pelo GitHub Actions sem chaves de acesso. |
 
 ## Segurança e governança de acesso
 
-- **Rede:** o banco não tem endereço público e só aceita conexões do security group das Lambdas. A `critical-notifications` não acessa o banco e por isso fica fora da VPC.
-- **Credenciais do banco:** geradas e guardadas pelo RDS no Secrets Manager. O template as injeta nas funções no momento do deploy (`{{resolve:secretsmanager:...}}`).
-- **Criptografia:** dados e backups do RDS criptografados em disco; conexões com o banco via SSL.
-- **Menor privilégio nas funções:** cada função tem seu próprio papel. Além de logs e acesso à VPC, apenas a `weekly-report` recebe uma permissão extra: `ses:SendEmail`, restrita ao remetente configurado (`ses:FromAddress`).
+- **Conexão ao banco:** o driver PostgreSQL usa `sslmode=verify-full` para verificar o certificado e o nome do host da Neon.
+- **Credenciais do banco:** use GitHub Actions Secrets. O CloudFormation mascara a senha com `NoEcho`. Restrinja o acesso à configuração das Lambdas.
+- **Menor privilégio nas funções:** cada função tem seu próprio papel. A `weekly-report` recebe `ses:SendEmail`, restrita ao remetente configurado.
 - **E-mail sem senha:** a `weekly-report` envia pela API do SES com o papel IAM da função; não há usuário nem senha SMTP.
 - **Proteção das APIs:** limites de requisições por segundo nas duas APIs.
 - **Dados pessoais nos logs:** os logs de acesso registram rota, status e latência, mas não o IP de quem chamou. Todos os logs expiram após o período de retenção.
@@ -79,6 +56,12 @@ Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
 | `GitHubRepository` | `gabrielresan/fiap-tc-4` | Repositório autorizado a fazer deploy. |
 | `GitHubDeployBranch` | `main` | Branch autorizada a fazer deploy. |
 | `EnableGitHubOidc` | `true` | Controla a criação do provedor e dos papéis de OIDC. O workflow com chaves IAM usa `false`. |
+| `NeonDbUrl` | obrigatório | URL JDBC da Neon, sem credenciais, com `sslmode=verify-full`. |
+| `NeonDbUser` | obrigatório | Usuário PostgreSQL da Neon. |
+| `NeonDbPassword` | obrigatório | Senha da Neon, com `NoEcho`. |
+| `DeploymentRevision` | obrigatório | Valor único por deploy para atualizar a versão publicada do feedback-service. |
+| `KeepLegacyRds` | `false` | Preserva o RDS e suas sub-redes privadas durante a migração. |
+| `ServicesEnabled` | `true` | Controla as execuções das Lambdas e o agendamento do relatório. |
 
 Os e-mails não ficam no repositório: são informados no comando de deploy ou como variáveis do GitHub Actions.
 
@@ -109,13 +92,15 @@ Execute a partir da raiz do repositório.
    sam validate --lint
    ```
 
-3. Faça o deploy, informando os e-mails:
+3. Carregue os três valores da Neon nas variáveis de ambiente `NEON_DB_URL`, `NEON_DB_USER` e `NEON_DB_PASSWORD` e execute o deploy. Para a primeira atualização de uma stack com RDS, acrescente `KeepLegacyRds=true`.
 
    ```sh
-   sam deploy --parameter-overrides Environment=dev ReportSenderEmail=remetente@exemplo.com AdminEmails=admin@exemplo.com
+   sam deploy --parameter-overrides Environment=dev ReportSenderEmail=remetente@exemplo.com AdminEmails=admin@exemplo.com \
+     "NeonDbUrl=$NEON_DB_URL" "NeonDbUser=$NEON_DB_USER" "NeonDbPassword=$NEON_DB_PASSWORD" \
+     "DeploymentRevision=$(date -u +%Y%m%dT%H%M%S)"
    ```
 
-   As demais opções (nome da stack `fiap-tc4-dev`, região `us-east-1`, bucket de artefatos e confirmação do *change set*) estão em `samconfig.toml`. O SAM envia os pacotes ao S3, mostra o que será criado e pede confirmação. A criação leva de 15 a 20 minutos, principalmente por causa do RDS.
+   As demais opções (nome da stack `fiap-tc4-dev`, região `us-east-1`, bucket de artefatos e confirmação do *change set*) estão em `samconfig.toml`. O SAM envia os pacotes ao S3, mostra o que será criado e pede confirmação.
 
 4. Abra o e-mail de verificação enviado pela AWS ao `ReportSenderEmail` e clique no link. Enquanto a conta estiver no *sandbox* do SES, cada destinatário diferente do remetente também precisa ser verificado:
 
@@ -161,7 +146,7 @@ O relatório considera a semana anterior; avaliações da semana corrente aparec
 
 O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três módulos e usa o SAM para criar ou atualizar a stack `fiap-tc4-dev`. Ele roda manualmente na `main`. A região padrão do workflow é Ohio (`us-east-2`).
 
-1. Na conta e região do projeto, prepare um bucket S3 privado para os pacotes e um papel de serviço que o CloudFormation possa assumir. A política desse papel precisa permitir provisionar os recursos do template, incluindo a rede, o banco, as funções e seus papéis de execução. A configuração do workflow não cria esses dois recursos iniciais. Confira a [documentação de papéis de serviço do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html).
+1. Na conta e região do projeto, prepare um bucket S3 privado para os pacotes e um papel de serviço que o CloudFormation possa assumir. A política precisa cobrir os recursos do template. Para uma migração, mantenha também as permissões para remover os recursos legados de RDS e rede. [Papéis de serviço do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
 2. Autorize o usuário da pipeline a acessar o prefixo `fiap-tc4-dev/` do bucket, criar e executar *change sets* da stack e consultar seu andamento, e usar `iam:PassRole` somente para o papel de execução do CloudFormation. A política de atualização de uma Lambda é insuficiente para criar a stack.
 3. Em **Settings → Secrets and variables → Actions** no GitHub, cadastre:
 
@@ -174,20 +159,29 @@ O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três m
    | Variável | `AWS_CFN_EXECUTION_ROLE_ARN` | ARN do papel de serviço do CloudFormation. |
    | Variável | `AWS_SAM_ARTIFACT_BUCKET` | Nome do bucket de artefatos. |
    | Variável opcional | `AWS_REGION` | Região da stack, caso seja diferente de `us-east-2`. |
+   | Secret | `NEON_DB_URL` | `jdbc:postgresql://HOST_DA_NEON:5432/feedbacks?sslmode=verify-full`. Use o nome real do banco. |
+   | Secret | `NEON_DB_USER` | Usuário selecionado em **Connect** na Neon. |
+   | Secret | `NEON_DB_PASSWORD` | Senha desse usuário. |
 
-4. Com o workflow na `main`, use **Actions → Deploy dos três serviços na AWS → Run workflow**. Acompanhe a criação da stack na aba **Events** do CloudFormation. O template provisiona NAT Gateway e RDS. Confira no plano da conta se esses recursos estão disponíveis e cobertos pelos créditos antes de iniciar o deploy.
-5. Verifique o remetente no SES e, se a conta estiver no sandbox, também os destinatários. Use o output `FeedbackEndpoint` e os passos de [teste após o deploy](#teste-após-o-deploy) para validar a avaliação crítica e o relatório.
+4. Em **Actions → Deploy dos três serviços na AWS → Run workflow**, selecione `main`. Para migrar uma stack com RDS, siga os passos abaixo. Para uma stack nova, o workflow provisiona apenas as funções e os recursos de apoio na AWS.
+5. Envie uma avaliação e confira se ela aparece na Neon. Teste o relatório e confira o envio pelo SES.
+
+### Migrar uma stack que já tem RDS
+
+1. Crie o banco na Neon. Se quiser preservar as avaliações, suspenda as gravações antes da cópia final, exporte o RDS a partir de um ambiente autorizado a acessar a VPC e restaure na Neon por conexão direta. Compare os registros antes de trocar a conexão. [Guia da Neon](https://neon.com/migration)
+2. Execute o primeiro deploy com **Preservar o RDS existente durante a validação da Neon** marcado. As Lambdas passam a usar a Neon, e o CloudFormation remove o NAT e libera seu IP público. O RDS antigo fica disponível para recuperação. Se as funções estavam pausadas, execute `on` após o deploy.
+3. Após testar a gravação e o relatório, confira se as Lambdas já saíram da VPC. Se versões antigas ainda mantiverem interfaces de rede, confirme que nenhum alias as usa antes de remover essas versões. [Rede do Lambda](https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html)
+4. Quando puder excluir o banco antigo, execute o deploy de novo com a opção de preservar desmarcada. O CloudFormation exclui o RDS e a rede legada. O template usa `DeletionPolicy: Delete` no RDS. Faça um backup antes desse passo se precisar dos dados. Confira a remoção em **CloudFormation → Eventos** e **RDS → Bancos de dados**. [Política de exclusão do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html)
 
 ### Pausar e reativar o ambiente de desenvolvimento
 
-O [workflow de pausa](../.github/workflows/schedule-environment.yml) inicia o ambiente às 08:00 e o pausa às 18:00, de segunda a sexta, no horário de Brasília. Há uma segunda verificação de pausa às 18:25 todos os dias. O horário é o início da operação. Aguarde o RDS e a atualização da stack antes de usar os serviços. O relatório roda às 09:00 de segunda para dar tempo à inicialização.
+O [workflow de pausa](../.github/workflows/schedule-environment.yml) liga as funções às 08:00 e as pausa às 18:00 em dias úteis, no horário de Brasília. Há uma verificação adicional às 18:25 todos os dias. O relatório roda às 09:00 de segunda.
 
-1. Publique a versão atualizada do template pelo workflow **Deploy dos três serviços na AWS**. A stack `fiap-tc4-dev` precisa conter os parâmetros `EnableNatGateway` e `ServicesEnabled`.
-2. No IAM, dê ao usuário da pipeline (`github-fiap`, se foi criado com esse nome) as ações `rds:StartDBInstance` e `rds:StopDBInstance` para a instância `dev-fiap-tc4-db`, além de `rds:DescribeDBInstances` para consultar seu estado. Em Ohio, o ARN da instância segue o formato `arn:aws:rds:us-east-2:ID_DA_CONTA:db:dev-fiap-tc4-db`. O workflow também reutiliza as permissões de CloudFormation e `iam:PassRole` do deploy. O papel de execução do CloudFormation precisa permitir colocar e remover a concorrência reservada das três funções (`lambda:PutFunctionConcurrency` e `lambda:DeleteFunctionConcurrency`), atualizar o agendamento do relatório e criar/excluir o NAT, o IP elástico e a rota.
-3. Em **Actions → Ligar e pausar ambiente AWS → Run workflow**, teste `off` e depois `on`. Em `off`, confirme que o RDS ficou `stopped`, o NAT foi removido e as Lambdas têm concorrência reservada igual a zero. Em `on`, aguarde o workflow terminar e teste as APIs.
-4. Em **Settings → Secrets and variables → Actions → Variables**, crie `AWS_ENVIRONMENT_SCHEDULE_ENABLED` com valor `true`. Os horários automáticos passam a valer com o workflow na branch padrão. Para pausar ou ligar imediatamente, use **Run workflow** com `off` ou `on`. A execução manual vale até a próxima execução agendada.
+1. Faça o deploy com a Neon antes de rodar o workflow. O papel do CloudFormation precisa permitir `lambda:PutFunctionConcurrency`, `lambda:DeleteFunctionConcurrency` e a atualização do agendamento.
+2. Em **Actions → Ligar e pausar ambiente AWS → Run workflow**, teste `off` e depois `on`. Em `off`, as três funções ficam com concorrência igual a zero e o agendamento fica desativado. Em `on`, teste as APIs depois de a execução terminar.
+3. Use `AWS_ENVIRONMENT_SCHEDULE_ENABLED=true` nas variáveis do repositório para habilitar o horário automático.
 
-A pausa desativa o agendamento do relatório e bloqueia novas execuções das três Lambdas. Ela remove o NAT, seu IP e a rota, e para o RDS preservando os dados. As URLs das APIs continuam existindo. Requisições a elas ainda podem gerar cobrança do API Gateway. Armazenamento do RDS, backups, segredos e logs também podem ter custo enquanto o ambiente está pausado. O RDS reinicia automaticamente após sete dias consecutivos parado. Consulte a [documentação do RDS](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_StopInstance.html) e as [limitações do agendamento do GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+A Neon controla o próprio banco. As URLs continuam disponíveis e requisições podem gerar cobrança no API Gateway durante a pausa. [Agendamento no GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
 ### Com OIDC
 
@@ -207,17 +201,15 @@ cd infra
 sam delete
 ```
 
-Remove a stack inteira, incluindo banco (sem snapshot final), logs e papéis. Os dados gravados são perdidos. O bucket de artefatos criado pelo SAM (`aws-sam-cli-managed-default`) é mantido para os próximos deploys.
+Remove a stack da AWS. A Neon e o bucket de artefatos são gerenciados fora dela. Se a stack ainda preservar o RDS legado, sua exclusão também apaga esse banco.
 
 ## Custos
 
-Com a stack no ar, os itens cobrados por hora são o NAT Gateway (cerca de US$ 0,05/h, mais o IP elástico) e o RDS `db.t4g.micro` (cerca de US$ 0,02/h), em torno de US$ 1,70 por dia na região `us-east-1`. Lambdas, APIs, Scheduler, SES e logs ficam próximos de zero no volume do projeto. Para economizar créditos, remova a stack quando não estiver em uso.
+Após a limpeza do RDS e da rede legada, os custos da AWS dependem do uso de Lambda, API Gateway, EventBridge, SES, CloudWatch e S3. Confira os limites do plano no console da Neon.
 
 ## Limitações e evoluções
 
-- **Usuário do banco:** as duas funções usam o usuário principal do RDS. O ideal é um usuário com permissão de escrita para o `feedback-service` e outro somente leitura para o `weekly-report`.
-- **Senha nas variáveis de ambiente:** a senha é injetada no deploy e fica visível na configuração da função para quem tem acesso ao console da Lambda. Ler o segredo do Secrets Manager em tempo de execução (ou usar autenticação IAM no RDS) eliminaria essa exposição e permitiria rotação automática.
+- **Usuário do banco:** as duas funções usam a mesma credencial. É possível separar as permissões de escrita e leitura em credenciais próprias.
 - **API interna sem autenticação:** a rota `/notifications` é protegida apenas por limite de requisições. Autorização IAM na rota ou troca da chamada HTTP por uma fila/tópico (SNS/SQS) resolveriam.
 - **Avisos críticos só em log:** a `critical-notifications` registra os avisos no CloudWatch. Um filtro de métrica sobre `critical_notification` com alarme e tópico SNS levaria o aviso por e-mail aos administradores.
-- **Disponibilidade:** RDS e NAT em uma única zona, para reduzir custo.
 - **SES em sandbox:** remetente e destinatários precisam ser verificados; envio limitado a 200 e-mails por dia.
