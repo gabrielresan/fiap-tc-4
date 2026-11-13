@@ -26,7 +26,7 @@ flowchart LR
     notificationsApi --> critical[Lambda<br/>critical-notifications]
     critical --> logs[(CloudWatch Logs)]
 
-    scheduler[EventBridge Scheduler<br/>segunda 08:00 São Paulo] --> report
+    scheduler[EventBridge Scheduler<br/>segunda 09:00 São Paulo] --> report
     nat --> ses[Amazon SES]
     ses -->|relatório semanal| admin([Administradores])
 
@@ -38,7 +38,7 @@ flowchart LR
 | --- | --- | --- |
 | `feedback-service` | API pública `POST /avaliacao` | Valida, classifica a urgência, grava no banco e encaminha avaliações críticas. |
 | `critical-notifications` | API interna `POST /notifications` | Registra no log os avisos de urgência `CRITICAL`. |
-| `weekly-report` | EventBridge Scheduler, segunda-feira 08:00 (`America/Sao_Paulo`) | Gera o relatório da semana anterior e o envia por e-mail via Amazon SES. |
+| `weekly-report` | EventBridge Scheduler, segunda-feira 09:00 (`America/Sao_Paulo`) | Gera o relatório da semana anterior e o envia por e-mail via Amazon SES. |
 
 Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
 
@@ -177,6 +177,17 @@ O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três m
 
 4. Com o workflow na `main`, use **Actions → Deploy dos três serviços na AWS → Run workflow**. Acompanhe a criação da stack na aba **Events** do CloudFormation. O template provisiona NAT Gateway e RDS. Confira no plano da conta se esses recursos estão disponíveis e cobertos pelos créditos antes de iniciar o deploy.
 5. Verifique o remetente no SES e, se a conta estiver no sandbox, também os destinatários. Use o output `FeedbackEndpoint` e os passos de [teste após o deploy](#teste-após-o-deploy) para validar a avaliação crítica e o relatório.
+
+### Pausar e reativar o ambiente de desenvolvimento
+
+O [workflow de pausa](../.github/workflows/schedule-environment.yml) inicia o ambiente às 08:00 e o pausa às 18:00, de segunda a sexta, no horário de Brasília. Há uma segunda verificação de pausa às 18:25 todos os dias. O horário é o início da operação. Aguarde o RDS e a atualização da stack antes de usar os serviços. O relatório roda às 09:00 de segunda para dar tempo à inicialização.
+
+1. Publique a versão atualizada do template pelo workflow **Deploy dos três serviços na AWS**. A stack `fiap-tc4-dev` precisa conter os parâmetros `EnableNatGateway` e `ServicesEnabled`.
+2. No IAM, dê ao usuário da pipeline (`github-fiap`, se foi criado com esse nome) as ações `rds:StartDBInstance` e `rds:StopDBInstance` para a instância `dev-fiap-tc4-db`, além de `rds:DescribeDBInstances` para consultar seu estado. Em Ohio, o ARN da instância segue o formato `arn:aws:rds:us-east-2:ID_DA_CONTA:db:dev-fiap-tc4-db`. O workflow também reutiliza as permissões de CloudFormation e `iam:PassRole` do deploy. O papel de execução do CloudFormation precisa permitir colocar e remover a concorrência reservada das três funções (`lambda:PutFunctionConcurrency` e `lambda:DeleteFunctionConcurrency`), atualizar o agendamento do relatório e criar/excluir o NAT, o IP elástico e a rota.
+3. Em **Actions → Ligar e pausar ambiente AWS → Run workflow**, teste `off` e depois `on`. Em `off`, confirme que o RDS ficou `stopped`, o NAT foi removido e as Lambdas têm concorrência reservada igual a zero. Em `on`, aguarde o workflow terminar e teste as APIs.
+4. Em **Settings → Secrets and variables → Actions → Variables**, crie `AWS_ENVIRONMENT_SCHEDULE_ENABLED` com valor `true`. Os horários automáticos passam a valer com o workflow na branch padrão. Para pausar ou ligar imediatamente, use **Run workflow** com `off` ou `on`. A execução manual vale até a próxima execução agendada.
+
+A pausa desativa o agendamento do relatório e bloqueia novas execuções das três Lambdas. Ela remove o NAT, seu IP e a rota, e para o RDS preservando os dados. As URLs das APIs continuam existindo. Requisições a elas ainda podem gerar cobrança do API Gateway. Armazenamento do RDS, backups, segredos e logs também podem ter custo enquanto o ambiente está pausado. O RDS reinicia automaticamente após sete dias consecutivos parado. Consulte a [documentação do RDS](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_StopInstance.html) e as [limitações do agendamento do GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
 ### Com OIDC
 
