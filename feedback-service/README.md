@@ -98,6 +98,8 @@ O Hibernate usa `ddl-auto=update`. Na primeira inicialização, cria a tabela e 
 | `DB_PASSWORD` | `feedback_service` | Senha do banco. |
 | `DB_DDL_AUTO` | `update` | Modo de geração do esquema do Hibernate (`update` ou `validate`). |
 | `NOTIFICATIONS_URL` | `http://localhost:8081` | URL base do `critical-notifications`. |
+| `NOTIFICATIONS_IAM_REGION` | vazio | Região usada para assinar a chamada à API na AWS. |
+| `NOTIFICATIONS_READ_TIMEOUT` | `5s` | Tempo de espera pela resposta da notificação. O SAM configura `12s` para o envio por SES. |
 | `URGENCY_CRITICAL_MAX` | `3` | Maior nota considerada `CRITICAL`. |
 | `URGENCY_MEDIUM_MAX` | `6` | Maior nota considerada `MEDIUM`. |
 

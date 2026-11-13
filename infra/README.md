@@ -9,7 +9,7 @@ Veja o fluxo entre os módulos no [README do projeto](../README.md#arquitetura).
 | Função | Gatilho | Responsabilidade |
 | --- | --- | --- |
 | `feedback-service` | API pública `POST /avaliacao` | Valida, classifica a urgência, grava no banco e encaminha avaliações críticas. |
-| `critical-notifications` | API interna `POST /notifications` | Registra no log os avisos de urgência `CRITICAL`. |
+| `critical-notifications` | `POST /notifications` com autenticação IAM | Envia os avisos de urgência `CRITICAL` aos administradores via SES. |
 | `weekly-report` | EventBridge Scheduler, segunda-feira 09:00 (`America/Sao_Paulo`) | Gera o relatório da semana anterior e o envia por e-mail via Amazon SES. |
 
 Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
@@ -115,7 +115,7 @@ No primeiro deploy, o SnapStart inicializa o `feedback-service` para gerar a ima
 Importe a [coleção FIAP Tech Challenge 4 — AWS dev](../postman/fiap-tc-4-aws.postman_collection.json). Ela vem com os endereços do deploy de desenvolvimento em Ohio. Se a stack for recriada, abra **CloudFormation → fiap-tc4-dev → Saídas** e atualize `feedbackEndpoint`, `notificationsApiUrl` e `weeklyReportFunctionName` com os valores de `FeedbackEndpoint`, `NotificationsApiUrl` e `WeeklyReportFunctionName`.
 
 - **Cadastrar avaliação crítica** grava uma avaliação de teste na Neon. Confira o aviso no CloudWatch para validar o encaminhamento.
-- **Registrar aviso direto** chama a API de notificações e confere se ela respondeu com `logged: true`.
+- **Enviar aviso direto** chama a API de notificações com AWS Signature e dispara um e-mail real. A identidade do Postman precisa de `execute-api:Invoke` no ARN `arn:aws:execute-api:us-east-2:<ID_DA_CONTA>:<ID_DA_API>/$default/POST/notifications`. O ID da API é o primeiro trecho do host em `NotificationsApiUrl`.
 - **Enviar relatório semanal** invoca a Lambda e pode enviar um e-mail real aos destinatários configurados. Execute essa requisição separadamente quando quiser testar o envio.
 
 Para a requisição do relatório, crie o ambiente **FIAP AWS** no Postman e selecione-o no canto superior direito. Adicione `AWS_ACCESS_KEY_ID` e `AWS_SECRET_ACCESS_KEY` como variáveis sensíveis e preencha apenas os valores locais. Use uma identidade autorizada a executar `lambda:InvokeFunction` em `dev-weekly-report`. Se usar credenciais temporárias, adicione também `AWS_SESSION_TOKEN` ao ambiente e informe `{{AWS_SESSION_TOKEN}}` no campo **Session Token** da aba **Authorization**. [Ambientes do Postman](https://learning.postman.com/docs/use/send-requests/variables/managing-environments) · [AWS Signature no Postman](https://learning.postman.com/docs/use/send-requests/authorization/aws-signature/) · [Permissão para invocar a Lambda](https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html)
@@ -142,7 +142,9 @@ Executar o relatório semanal sem esperar a segunda-feira:
 aws lambda invoke --region us-east-2 --function-name dev-weekly-report response.json
 ```
 
-O relatório considera a semana anterior; avaliações da semana corrente aparecem no relatório da próxima segunda-feira.
+O relatório considera a semana anterior. Avaliações da semana corrente aparecem no relatório da próxima segunda-feira.
+
+Para validar o aviso crítico, confirme o e-mail com descrição, urgência e data de envio. O grupo `/aws/lambda/dev-critical-notifications` registra `critical_notification_sent` com o ID retornado pelo SES, ou `critical_notification_delivery_failed` com a causa da falha. As duas funções usam o remetente e os destinatários configurados no deploy. Se o SES estiver no sandbox, verifique todos esses endereços em Ohio.
 
 ## Deploy pelo GitHub Actions
 
@@ -158,8 +160,8 @@ O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três m
    | --- | --- | --- |
    | Secret | `AWS_ACCESS_KEY_ID` | ID da chave do usuário da pipeline. |
    | Secret | `AWS_SECRET_ACCESS_KEY` | Chave secreta do usuário da pipeline. |
-   | Secret | `REPORT_SENDER_EMAIL` | Remetente do relatório no SES. |
-   | Secret | `ADMIN_EMAILS` | Destinatários do relatório, separados por vírgula e sem espaços. |
+   | Secret | `REPORT_SENDER_EMAIL` | Remetente do relatório e dos avisos críticos no SES. |
+   | Secret | `ADMIN_EMAILS` | Destinatários do relatório e dos avisos críticos, separados por vírgula e sem espaços. |
    | Variável | `AWS_CFN_EXECUTION_ROLE_ARN` | ARN do papel de serviço do CloudFormation. |
    | Variável | `AWS_SAM_ARTIFACT_BUCKET` | Nome do bucket de artefatos. |
    | Variável opcional | `AWS_REGION` | Região da stack, caso seja diferente de `us-east-2`. |
@@ -207,6 +209,5 @@ Os custos da AWS dependem do uso de Lambda, API Gateway, EventBridge, SES, Cloud
 ## Limitações e evoluções
 
 - **Usuário do banco:** as duas funções usam a mesma credencial. É possível separar as permissões de escrita e leitura em credenciais próprias.
-- **API interna sem autenticação:** a rota `/notifications` é protegida apenas por limite de requisições. Autorização IAM na rota ou troca da chamada HTTP por uma fila/tópico (SNS/SQS) resolveriam.
-- **Avisos críticos só em log:** a `critical-notifications` registra os avisos no CloudWatch. Um filtro de métrica sobre `critical_notification` com alarme e tópico SNS levaria o aviso por e-mail aos administradores.
+- **Falhas no aviso crítico:** a avaliação permanece gravada se a notificação falhar. Consulte os logs para identificar falhas de chamada ou de envio.
 - **SES em sandbox:** remetente e destinatários precisam ser verificados; envio limitado a 200 e-mails por dia.

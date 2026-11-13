@@ -1,6 +1,6 @@
 # Critical notifications
 
-API REST em Java 21 e Spring Boot 4.1.2. Recebe avaliações do `feedback-service` e registra os avisos de urgência `CRITICAL` nos logs. Na AWS, os registros ficam no CloudWatch Logs.
+API REST em Java 21 e Spring Boot 4.1.2. Recebe avaliações do `feedback-service`. Na AWS, envia avisos de urgência `CRITICAL` por e-mail via Amazon SES. Na execução local, registra o aviso nos logs.
 
 ## Endpoint
 
@@ -19,11 +19,12 @@ Todos os campos são obrigatórios. A descrição não pode ser vazia. A nota de
 
 | HTTP | Resposta | Significado |
 | --- | --- | --- |
-| 200 | `{"logged":true}` | Feedback crítico registrado no log. |
+| 200 | `{"logged":true}` | Feedback crítico processado. No modo SES, o serviço aceitou o e-mail para envio. |
 | 200 | `{"logged":false}` | Feedback LOW ou MEDIUM; nenhum aviso registrado. |
 | 400 | `application/problem+json` | JSON inválido ou campos inválidos/ausentes. |
+| 502 | `application/problem+json` | Falha ao enviar o aviso pelo SES. |
 
-A resposta usa `logged`, substituindo o antigo `sent`, para informar o resultado do registro. Não representa entrega de e-mail. O registro inclui descrição, urgência, data original do feedback (`submittedAt`) e data do registro (`loggedAt`). Exemplo:
+O campo `logged` indica que o aviso foi processado. No modo local, o registro inclui descrição, urgência, data original do feedback (`submittedAt`) e data do registro (`loggedAt`).
 
 ```text
 critical_notification description=Aula indisponível urgency=CRITICAL submittedAt=2026-11-06T12:00:00Z loggedAt=2026-11-06T12:01:00Z
@@ -41,7 +42,7 @@ Use o [Compose da raiz](../README.md#executar-localmente-com-docker). A API fica
 
 ### Execução com Maven
 
-O módulo tem aplicação, porta e dependências próprias, sem depender da aplicação raiz ou do weekly-report. A única variável opcional é `PORT` (padrão `8081`). Não exige servidor de e-mail ou variáveis `SMTP_*`/`NOTIFICATION_*`.
+O módulo usa `PORT=8081` e `EMAIL_PROVIDER=log` por padrão.
 
 Com JDK 21 e Maven instalados, execute a partir da raiz:
 
@@ -91,6 +92,6 @@ Use o pacote `critical-notifications/target/critical-notifications-lambda.zip` p
 | Integração | API Gateway HTTP API, payload 2.0 |
 | Rota | `POST /notifications` |
 
-O `feedback-service` deve receber a URL base da API em `NOTIFICATIONS_URL`. Uma avaliação crítica deve gerar o evento `critical_notification` nos logs da função. O corpo da requisição e as respostas HTTP são os mesmos da execução local.
+O SAM configura `EMAIL_PROVIDER=ses`, `NOTIFICATION_FROM` e `NOTIFICATION_RECIPIENTS`. O e-mail contém descrição, urgência e data de envio. A rota usa autenticação IAM e o `feedback-service` assina a chamada com as credenciais do próprio papel de execução.
 
 Veja o [guia de deploy e operação](../infra/README.md) para testar o fluxo completo na AWS.
