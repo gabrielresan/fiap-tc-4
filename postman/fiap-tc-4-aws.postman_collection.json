@@ -69,7 +69,7 @@
       }
     },
     {
-      "name": "Critical notifications — Registrar aviso direto",
+      "name": "Critical notifications — Enviar aviso direto",
       "event": [
         {
           "listen": "test",
@@ -77,14 +77,36 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('Status 200', () => pm.response.to.have.status(200));",
-              "pm.test('Aviso registrado', () => pm.expect(pm.response.json().logged).to.eql(true));"
+              "pm.test('Aviso processado', () => pm.expect(pm.response.json().logged).to.eql(true));"
             ]
           }
         }
       ],
       "request": {
         "auth": {
-          "type": "noauth"
+          "type": "awsv4",
+          "awsv4": [
+            {
+              "key": "accessKey",
+              "value": "{{AWS_ACCESS_KEY_ID}}",
+              "type": "string"
+            },
+            {
+              "key": "secretKey",
+              "value": "{{AWS_SECRET_ACCESS_KEY}}",
+              "type": "string"
+            },
+            {
+              "key": "region",
+              "value": "{{awsRegion}}",
+              "type": "string"
+            },
+            {
+              "key": "service",
+              "value": "execute-api",
+              "type": "string"
+            }
+          ]
         },
         "method": "POST",
         "header": [
@@ -111,7 +133,7 @@
             "notifications"
           ]
         },
-        "description": "Chama a API de notificações diretamente e registra um aviso de teste no CloudWatch."
+        "description": "Requer assinatura AWS e execute-api:Invoke na rota POST /notifications. Envia um e-mail real de teste pelo SES aos administradores."
       }
     },
     {

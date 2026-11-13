@@ -4,11 +4,13 @@ import br.com.fiap.tc4.notifications.model.CriticalNotification;
 import br.com.fiap.tc4.notifications.service.NotificationSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
 
 @Component
+@ConditionalOnProperty(name = "notifications.email-provider", havingValue = "log", matchIfMissing = true)
 public class LoggingNotificationSender implements NotificationSender {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggingNotificationSender.class);

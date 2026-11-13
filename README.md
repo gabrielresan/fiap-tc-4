@@ -19,7 +19,7 @@ Na AWS, os três módulos rodam em funções Lambda e o banco fica na Neon. O Ev
 | Módulo | Responsabilidade |
 | --- | --- |
 | [feedback-service](feedback-service/README.md) | Recebe, classifica e grava avaliações. |
-| [critical-notifications](critical-notifications/README.md) | Registra os avisos de avaliações críticas. |
+| [critical-notifications](critical-notifications/README.md) | Envia avisos de avaliações críticas por e-mail na AWS. |
 | [weekly-report](weekly-report/README.md) | Gera e envia o relatório da semana anterior. |
 
 O [guia de infraestrutura](infra/README.md) cobre o deploy manual pelo GitHub Actions, a configuração da Neon, os testes na AWS e a pausa do ambiente.

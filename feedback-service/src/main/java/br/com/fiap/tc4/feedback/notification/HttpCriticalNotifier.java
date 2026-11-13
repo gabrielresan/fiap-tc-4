@@ -1,11 +1,13 @@
 package br.com.fiap.tc4.feedback.notification;
 
 import br.com.fiap.tc4.feedback.model.Feedback;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import software.amazon.awssdk.core.exception.SdkException;
 
 import java.net.http.HttpClient;
 
@@ -17,17 +19,21 @@ public class HttpCriticalNotifier implements CriticalNotifier {
 
     private final RestClient restClient;
 
-    public HttpCriticalNotifier(NotificationsProperties properties) {
+    public HttpCriticalNotifier(NotificationsProperties properties,
+                                @Value("${feedback.notifications.iam-region:}") String iamRegion) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(properties.readTimeout());
 
-        this.restClient = RestClient.builder()
+        RestClient.Builder builder = RestClient.builder()
                 .baseUrl(properties.url().toString())
-                .requestFactory(requestFactory)
-                .build();
+                .requestFactory(requestFactory);
+        if (!iamRegion.isBlank()) {
+            builder.requestInterceptor(new ApiGatewayRequestSigner(iamRegion));
+        }
+        this.restClient = builder.build();
     }
 
     @Override
@@ -44,7 +50,7 @@ public class HttpCriticalNotifier implements CriticalNotifier {
                     .body(payload)
                     .retrieve()
                     .toBodilessEntity();
-        } catch (RestClientException e) {
+        } catch (RestClientException | SdkException e) {
             throw new NotificationException("Failed to notify critical feedback " + feedback.id(), e);
         }
     }

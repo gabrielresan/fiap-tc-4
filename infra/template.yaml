@@ -159,6 +159,9 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       Description: API interna chamada pelo feedback-service para avisos de feedbacks criticos
+      Auth:
+        EnableIamAuthorizer: true
+        DefaultAuthorizer: AWS_IAM
       DefaultRouteSettings:
         ThrottlingBurstLimit: 10
         ThrottlingRateLimit: 5
@@ -179,7 +182,7 @@ Resources:
     Properties:
       ReservedConcurrentExecutions: !If [RunServices, !Ref 'AWS::NoValue', 0]
       FunctionName: !Sub ${Environment}-critical-notifications
-      Description: Registra os avisos de feedbacks com urgencia CRITICAL
+      Description: Envia avisos de avaliacoes criticas aos administradores via Amazon SES
       CodeUri: ../critical-notifications/target/critical-notifications-lambda.zip
       Handler: br.com.fiap.tc4.notifications.CriticalNotificationsHandler::handleRequest
       MemorySize: 1024
@@ -189,6 +192,17 @@ Resources:
       AutoPublishAlias: live
       SnapStart:
         ApplyOn: PublishedVersions
+      Environment:
+        Variables:
+          EMAIL_PROVIDER: ses
+          NOTIFICATION_FROM: !Ref ReportSenderEmail
+          NOTIFICATION_RECIPIENTS: !Join [ ',', !Ref AdminEmails ]
+      Policies:
+        - Statement:
+            - Sid: SendCriticalNotification
+              Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${ReportSenderEmail}
       Events:
         Notify:
           Type: HttpApi
@@ -247,6 +261,14 @@ Resources:
           DB_PASSWORD: !Ref NeonDbPassword
           DB_DDL_AUTO: update
           NOTIFICATIONS_URL: !Sub https://${NotificationsApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+          NOTIFICATIONS_IAM_REGION: !Ref AWS::Region
+          NOTIFICATIONS_READ_TIMEOUT: 12s
+      Policies:
+        - Statement:
+            - Sid: InvokeNotificationsRoute
+              Effect: Allow
+              Action: execute-api:Invoke
+              Resource: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${NotificationsApi}/$default/POST/notifications
       Events:
         SubmitFeedback:
           Type: HttpApi
