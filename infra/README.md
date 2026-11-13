@@ -60,7 +60,6 @@ Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
 | `NeonDbUser` | obrigatório | Usuário PostgreSQL da Neon. |
 | `NeonDbPassword` | obrigatório | Senha da Neon, com `NoEcho`. |
 | `DeploymentRevision` | obrigatório | Valor único por deploy para atualizar a versão publicada do feedback-service. |
-| `KeepLegacyRds` | `false` | Preserva o RDS e suas sub-redes privadas durante a migração. |
 | `ServicesEnabled` | `true` | Controla as execuções das Lambdas e o agendamento do relatório. |
 
 Os e-mails não ficam no repositório: são informados no comando de deploy ou como variáveis do GitHub Actions.
@@ -92,7 +91,7 @@ Execute a partir da raiz do repositório.
    sam validate --lint
    ```
 
-3. Carregue os três valores da Neon nas variáveis de ambiente `NEON_DB_URL`, `NEON_DB_USER` e `NEON_DB_PASSWORD` e execute o deploy. Para a primeira atualização de uma stack com RDS, acrescente `KeepLegacyRds=true`.
+3. Carregue os três valores da Neon nas variáveis de ambiente `NEON_DB_URL`, `NEON_DB_USER` e `NEON_DB_PASSWORD` e execute o deploy.
 
    ```sh
    sam deploy --parameter-overrides Environment=dev ReportSenderEmail=remetente@exemplo.com AdminEmails=admin@exemplo.com \
@@ -146,7 +145,7 @@ O relatório considera a semana anterior; avaliações da semana corrente aparec
 
 O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três módulos e usa o SAM para criar ou atualizar a stack `fiap-tc4-dev`. Ele roda manualmente na `main`. A região padrão do workflow é Ohio (`us-east-2`).
 
-1. Na conta e região do projeto, prepare um bucket S3 privado para os pacotes e um papel de serviço que o CloudFormation possa assumir. A política precisa cobrir os recursos do template. Para uma migração, mantenha também as permissões para remover os recursos legados de RDS e rede. [Papéis de serviço do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
+1. Na conta e região do projeto, prepare um bucket S3 privado para os pacotes e um papel de serviço que o CloudFormation possa assumir. A política precisa cobrir os recursos do template. [Papéis de serviço do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
 2. Autorize o usuário da pipeline a acessar o prefixo `fiap-tc4-dev/` do bucket, criar e executar *change sets* da stack e consultar seu andamento, e usar `iam:PassRole` somente para o papel de execução do CloudFormation. A política de atualização de uma Lambda é insuficiente para criar a stack.
 3. Em **Settings → Secrets and variables → Actions** no GitHub, cadastre:
 
@@ -163,15 +162,8 @@ O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três m
    | Secret | `NEON_DB_USER` | Usuário selecionado em **Connect** na Neon. |
    | Secret | `NEON_DB_PASSWORD` | Senha desse usuário. |
 
-4. Em **Actions → Deploy dos três serviços na AWS → Run workflow**, selecione `main`. Para migrar uma stack com RDS, siga os passos abaixo. Para uma stack nova, o workflow provisiona apenas as funções e os recursos de apoio na AWS.
+4. Em **Actions → Deploy dos três serviços na AWS → Run workflow**, selecione `main`.
 5. Envie uma avaliação e confira se ela aparece na Neon. Teste o relatório e confira o envio pelo SES.
-
-### Migrar uma stack que já tem RDS
-
-1. Crie o banco na Neon. Se quiser preservar as avaliações, suspenda as gravações antes da cópia final, exporte o RDS a partir de um ambiente autorizado a acessar a VPC e restaure na Neon por conexão direta. Compare os registros antes de trocar a conexão. [Guia da Neon](https://neon.com/migration)
-2. Execute o primeiro deploy com **Preservar o RDS existente durante a validação da Neon** marcado. As Lambdas passam a usar a Neon, e o CloudFormation remove o NAT e libera seu IP público. O RDS antigo fica disponível para recuperação. Se as funções estavam pausadas, execute `on` após o deploy.
-3. Após testar a gravação e o relatório, confira se as Lambdas já saíram da VPC. Se versões antigas ainda mantiverem interfaces de rede, confirme que nenhum alias as usa antes de remover essas versões. [Rede do Lambda](https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html)
-4. Quando puder excluir o banco antigo, execute o deploy de novo com a opção de preservar desmarcada. O CloudFormation exclui o RDS e a rede legada. O template usa `DeletionPolicy: Delete` no RDS. Faça um backup antes desse passo se precisar dos dados. Confira a remoção em **CloudFormation → Eventos** e **RDS → Bancos de dados**. [Política de exclusão do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-attribute-deletionpolicy.html)
 
 ### Pausar e reativar o ambiente de desenvolvimento
 
@@ -201,11 +193,11 @@ cd infra
 sam delete
 ```
 
-Remove a stack da AWS. A Neon e o bucket de artefatos são gerenciados fora dela. Se a stack ainda preservar o RDS legado, sua exclusão também apaga esse banco.
+Remove a stack da AWS. A Neon e o bucket de artefatos são gerenciados fora dela.
 
 ## Custos
 
-Após a limpeza do RDS e da rede legada, os custos da AWS dependem do uso de Lambda, API Gateway, EventBridge, SES, CloudWatch e S3. Confira os limites do plano no console da Neon.
+Os custos da AWS dependem do uso de Lambda, API Gateway, EventBridge, SES, CloudWatch e S3. Confira os limites do plano no console da Neon.
 
 ## Limitações e evoluções
 

@@ -2,11 +2,6 @@ name: Deploy dos três serviços na AWS
 
 on:
   workflow_dispatch:
-    inputs:
-      keep_legacy_rds:
-        description: Preservar o RDS existente durante a validação da Neon
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -53,7 +48,6 @@ jobs:
           NEON_DB_URL: ${{ secrets.NEON_DB_URL }}
           NEON_DB_USER: ${{ secrets.NEON_DB_USER }}
           NEON_DB_PASSWORD: ${{ secrets.NEON_DB_PASSWORD }}
-          KEEP_LEGACY_RDS: ${{ inputs.keep_legacy_rds }}
           AWS_CFN_EXECUTION_ROLE_ARN: ${{ vars.AWS_CFN_EXECUTION_ROLE_ARN }}
           AWS_SAM_ARTIFACT_BUCKET: ${{ vars.AWS_SAM_ARTIFACT_BUCKET }}
         run: |
@@ -64,21 +58,6 @@ jobs:
           : "${NEON_DB_PASSWORD:?Cadastre o secret NEON_DB_PASSWORD}"
           : "${AWS_CFN_EXECUTION_ROLE_ARN:?Cadastre a variável AWS_CFN_EXECUTION_ROLE_ARN}"
           : "${AWS_SAM_ARTIFACT_BUCKET:?Cadastre a variável AWS_SAM_ARTIFACT_BUCKET}"
-
-          # Preserve an existing RDS on the first cutover, but never recreate it.
-          if [[ "$KEEP_LEGACY_RDS" == true ]]; then
-            if stack=$(aws cloudformation describe-stacks --stack-name fiap-tc4-dev --output json 2>&1); then
-              previous=$(jq -r '.Stacks[0].Parameters[]? | select(.ParameterKey == "KeepLegacyRds") | .ParameterValue' <<< "$stack")
-              if [[ "$previous" == false ]]; then
-                KEEP_LEGACY_RDS=false
-              fi
-            elif [[ "$stack" == *"Stack with id fiap-tc4-dev does not exist"* ]]; then
-              KEEP_LEGACY_RDS=false
-            else
-              printf '%s\n' "$stack" >&2
-              exit 1
-            fi
-          fi
 
           sam deploy \
             --config-env github \
@@ -91,7 +70,6 @@ jobs:
             --parameter-overrides \
               Environment=dev \
               EnableGitHubOidc=false \
-              "KeepLegacyRds=$KEEP_LEGACY_RDS" \
               "DeploymentRevision=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
               "NeonDbUrl=$NEON_DB_URL" \
               "NeonDbUser=$NEON_DB_USER" \
