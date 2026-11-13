@@ -48,8 +48,22 @@ Parameters:
     AllowedValues: ['true', 'false']
     Description: Cria o provedor e os papeis de deploy via GitHub OIDC
 
+  EnableNatGateway:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Cria o NAT Gateway e a rota de internet das sub-redes privadas
+
+  ServicesEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Permite executar as Lambdas e habilita o agendamento do relatorio
+
 Conditions:
   CreateGitHubOidc: !Equals [!Ref EnableGitHubOidc, 'true']
+  NatEnabled: !Equals [!Ref EnableNatGateway, 'true']
+  RunServices: !Equals [!Ref ServicesEnabled, 'true']
 
 Globals:
   Function:
@@ -142,6 +156,7 @@ Resources:
 
   NatGatewayElasticIp:
     Type: AWS::EC2::EIP
+    Condition: NatEnabled
     DependsOn: InternetGatewayAttachment
     Properties:
       Domain: vpc
@@ -151,6 +166,7 @@ Resources:
 
   NatGateway:
     Type: AWS::EC2::NatGateway
+    Condition: NatEnabled
     Properties:
       AllocationId: !GetAtt NatGatewayElasticIp.AllocationId
       SubnetId: !Ref PublicSubnet
@@ -168,6 +184,7 @@ Resources:
 
   PrivateDefaultRoute:
     Type: AWS::EC2::Route
+    Condition: NatEnabled
     Properties:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
@@ -276,6 +293,7 @@ Resources:
   WeeklyReportFunction:
     Type: AWS::Serverless::Function
     Properties:
+      ReservedConcurrentExecutions: !If [RunServices, !Ref 'AWS::NoValue', 0]
       FunctionName: !Sub ${Environment}-weekly-report
       Description: Gera o relatorio semanal dos feedbacks e o envia por e-mail aos administradores
       CodeUri: ../weekly-report/target/weekly-report-lambda.jar
@@ -313,9 +331,10 @@ Resources:
           Type: ScheduleV2
           Properties:
             Name: !Sub ${Environment}-weekly-report-schedule
-            Description: Toda segunda-feira as 08:00 de Sao Paulo, com os feedbacks da semana anterior
-            ScheduleExpression: cron(0 8 ? * MON *)
+            Description: Toda segunda-feira as 09:00 de Sao Paulo, com os feedbacks da semana anterior
+            ScheduleExpression: cron(0 9 ? * MON *)
             ScheduleExpressionTimezone: America/Sao_Paulo
+            State: !If [RunServices, ENABLED, DISABLED]
             RetryPolicy:
               MaximumRetryAttempts: 2
               MaximumEventAgeInSeconds: 3600
@@ -350,6 +369,7 @@ Resources:
   CriticalNotificationsFunction:
     Type: AWS::Serverless::Function
     Properties:
+      ReservedConcurrentExecutions: !If [RunServices, !Ref 'AWS::NoValue', 0]
       FunctionName: !Sub ${Environment}-critical-notifications
       Description: Registra os avisos de feedbacks com urgencia CRITICAL
       CodeUri: ../critical-notifications/target/critical-notifications-lambda.zip
@@ -399,6 +419,7 @@ Resources:
   FeedbackServiceFunction:
     Type: AWS::Serverless::Function
     Properties:
+      ReservedConcurrentExecutions: !If [RunServices, !Ref 'AWS::NoValue', 0]
       FunctionName: !Sub ${Environment}-feedback-service
       Description: Recebe, classifica e grava as avaliacoes; encaminha as criticas ao critical-notifications
       CodeUri: ../feedback-service/target/feedback-service-lambda.zip
