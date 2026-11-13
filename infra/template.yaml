@@ -42,6 +42,15 @@ Parameters:
     Default: main
     Description: Unica branch autorizada a fazer o deploy pelo GitHub Actions
 
+  EnableGitHubOidc:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Cria o provedor e os papeis de deploy via GitHub OIDC
+
+Conditions:
+  CreateGitHubOidc: !Equals [!Ref EnableGitHubOidc, 'true']
+
 Globals:
   Function:
     Runtime: java21
@@ -424,6 +433,7 @@ Resources:
 
   GitHubOidcProvider:
     Type: AWS::IAM::OIDCProvider
+    Condition: CreateGitHubOidc
     Properties:
       Url: https://token.actions.githubusercontent.com
       ClientIdList:
@@ -431,6 +441,7 @@ Resources:
 
   CloudFormationExecutionRole:
     Type: AWS::IAM::Role
+    Condition: CreateGitHubOidc
     Properties:
       RoleName: !Sub ${Environment}-fiap-tc4-cfn-execution
       Description: Usada somente pelo CloudFormation para criar e atualizar os recursos da stack
@@ -446,6 +457,7 @@ Resources:
 
   GitHubDeployRole:
     Type: AWS::IAM::Role
+    Condition: CreateGitHubOidc
     Properties:
       RoleName: !Sub ${Environment}-fiap-tc4-github-deploy
       Description: Assumida pelo GitHub Actions via OIDC; so consegue implantar esta stack pelo CloudFormation
@@ -551,9 +563,11 @@ Outputs:
     Value: !Ref FeedbackServiceFunction
 
   GitHubDeployRoleArn:
+    Condition: CreateGitHubOidc
     Description: Papel que o GitHub Actions assume via OIDC (role-to-assume do aws-actions/configure-aws-credentials)
     Value: !GetAtt GitHubDeployRole.Arn
 
   CloudFormationExecutionRoleArn:
+    Condition: CreateGitHubOidc
     Description: Papel passado ao sam deploy com --role-arn no GitHub Actions
     Value: !GetAtt CloudFormationExecutionRole.Arn

@@ -78,6 +78,7 @@ Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
 | `LogRetentionInDays` | `14` | Retenção dos logs (1, 3, 7, 14 ou 30 dias). |
 | `GitHubRepository` | `gabrielresan/fiap-tc-4` | Repositório autorizado a fazer deploy. |
 | `GitHubDeployBranch` | `main` | Branch autorizada a fazer deploy. |
+| `EnableGitHubOidc` | `true` | Controla a criação do provedor e dos papéis de OIDC. O workflow com chaves IAM usa `false`. |
 
 Os e-mails não ficam no repositório: são informados no comando de deploy ou como variáveis do GitHub Actions.
 
@@ -155,6 +156,29 @@ aws lambda invoke --function-name dev-weekly-report response.json
 O relatório considera a semana anterior; avaliações da semana corrente aparecem no relatório da próxima segunda-feira.
 
 ## Deploy automatizado (GitHub Actions)
+
+### Com o usuário IAM do projeto AWS
+
+O [workflow](../.github/workflows/deploy-lambda.yml) testa e empacota os três módulos e usa o SAM para criar ou atualizar a stack `fiap-tc4-dev`. Ele roda manualmente na `main`. A região padrão do workflow é Ohio (`us-east-2`).
+
+1. Na conta e região do projeto, prepare um bucket S3 privado para os pacotes e um papel de serviço que o CloudFormation possa assumir. A política desse papel precisa permitir provisionar os recursos do template, incluindo a rede, o banco, as funções e seus papéis de execução. A configuração do workflow não cria esses dois recursos iniciais. Confira a [documentação de papéis de serviço do CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html).
+2. Autorize o usuário da pipeline a acessar o prefixo `fiap-tc4-dev/` do bucket, criar e executar *change sets* da stack e consultar seu andamento, e usar `iam:PassRole` somente para o papel de execução do CloudFormation. A política de atualização de uma Lambda é insuficiente para criar a stack.
+3. Em **Settings → Secrets and variables → Actions** no GitHub, cadastre:
+
+   | Tipo | Nome | Valor |
+   | --- | --- | --- |
+   | Secret | `AWS_ACCESS_KEY_ID` | ID da chave do usuário da pipeline. |
+   | Secret | `AWS_SECRET_ACCESS_KEY` | Chave secreta do usuário da pipeline. |
+   | Secret | `REPORT_SENDER_EMAIL` | Remetente do relatório no SES. |
+   | Secret | `ADMIN_EMAILS` | Destinatários do relatório, separados por vírgula e sem espaços. |
+   | Variável | `AWS_CFN_EXECUTION_ROLE_ARN` | ARN do papel de serviço do CloudFormation. |
+   | Variável | `AWS_SAM_ARTIFACT_BUCKET` | Nome do bucket de artefatos. |
+   | Variável opcional | `AWS_REGION` | Região da stack, caso seja diferente de `us-east-2`. |
+
+4. Com o workflow na `main`, use **Actions → Deploy dos três serviços na AWS → Run workflow**. Acompanhe a criação da stack na aba **Events** do CloudFormation. O template provisiona NAT Gateway e RDS. Confira no plano da conta se esses recursos estão disponíveis e cobertos pelos créditos antes de iniciar o deploy.
+5. Verifique o remetente no SES e, se a conta estiver no sandbox, também os destinatários. Use o output `FeedbackEndpoint` e os passos de [teste após o deploy](#teste-após-o-deploy) para validar a avaliação crítica e o relatório.
+
+### Com OIDC
 
 O primeiro deploy, feito localmente, cria os papéis usados pelo GitHub Actions. A partir daí, o workflow precisa de:
 
