@@ -12,3 +12,7 @@ parameter_overrides = "Environment=dev"
 
 [default.validate.parameters]
 lint = true
+
+[github.deploy.parameters]
+stack_name = "fiap-tc4-dev"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND"
