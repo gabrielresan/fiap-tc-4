@@ -70,12 +70,6 @@ Parameters:
     MinLength: 1
     Description: Identificador novo para publicar a versao do feedback-service a cada deploy
 
-  KeepLegacyRds:
-    Type: String
-    Default: 'false'
-    AllowedValues: ['true', 'false']
-    Description: Mantem o RDS antigo durante a validacao da migracao
-
   ServicesEnabled:
     Type: String
     Default: 'true'
@@ -84,7 +78,6 @@ Parameters:
 
 Conditions:
   CreateGitHubOidc: !Equals [!Ref EnableGitHubOidc, 'true']
-  KeepLegacyDatabase: !Equals [!Ref KeepLegacyRds, 'true']
   RunServices: !Equals [!Ref ServicesEnabled, 'true']
 
 Globals:
@@ -98,121 +91,6 @@ Globals:
       Project: fiap-tc-4
 
 Resources:
-  Vpc:
-    Type: AWS::EC2::VPC
-    Condition: KeepLegacyDatabase
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-vpc
-        - Key: Project
-          Value: fiap-tc-4
-
-  PrivateSubnetA:
-    Type: AWS::EC2::Subnet
-    Condition: KeepLegacyDatabase
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: 10.0.10.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-private-a
-
-  PrivateSubnetB:
-    Type: AWS::EC2::Subnet
-    Condition: KeepLegacyDatabase
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: 10.0.11.0/24
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-private-b
-
-  LambdaSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Condition: KeepLegacyDatabase
-    Properties:
-      GroupDescription: Lambdas que acessam o banco; sem entrada, saida liberada via NAT
-      VpcId: !Ref Vpc
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-lambda-sg
-
-  DatabaseSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Condition: KeepLegacyDatabase
-    Properties:
-      GroupDescription: PostgreSQL acessivel apenas pelas Lambdas da VPC
-      VpcId: !Ref Vpc
-      SecurityGroupIngress:
-        - Description: PostgreSQL a partir das Lambdas
-          IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-db-sg
-
-  DatabaseSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Condition: KeepLegacyDatabase
-    Properties:
-      DBSubnetGroupDescription: Subnets privadas do PostgreSQL
-      SubnetIds:
-        - !Ref PrivateSubnetA
-        - !Ref PrivateSubnetB
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-db-subnets
-
-  DatabaseLogGroup:
-    Type: AWS::Logs::LogGroup
-    Condition: KeepLegacyDatabase
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-    Properties:
-      LogGroupName: !Sub /aws/rds/instance/${Environment}-fiap-tc4-db/postgresql
-      RetentionInDays: !Ref LogRetentionInDays
-
-  Database:
-    Type: AWS::RDS::DBInstance
-    Condition: KeepLegacyDatabase
-    DependsOn: DatabaseLogGroup
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
-    Properties:
-      DBInstanceIdentifier: !Sub ${Environment}-fiap-tc4-db
-      Engine: postgres
-      EngineVersion: '16.13'
-      AutoMinorVersionUpgrade: true
-      DBInstanceClass: db.t4g.micro
-      AllocatedStorage: '20'
-      StorageType: gp3
-      StorageEncrypted: true
-      DBName: feedbacks
-      MasterUsername: feedback_admin
-      ManageMasterUserPassword: true
-      DBSubnetGroupName: !Ref DatabaseSubnetGroup
-      VPCSecurityGroups:
-        - !Ref DatabaseSecurityGroup
-      PubliclyAccessible: false
-      MultiAZ: false
-      BackupRetentionPeriod: 1
-      DeletionProtection: false
-      EnableCloudwatchLogsExports:
-        - postgresql
-      Tags:
-        - Key: Name
-          Value: !Sub ${Environment}-fiap-tc4-db
-        - Key: Project
-          Value: fiap-tc-4
-
   ReportSenderIdentity:
     Type: AWS::SES::EmailIdentity
     Properties:
@@ -248,7 +126,6 @@ Resources:
           NOTIFICATION_FROM: !Ref ReportSenderEmail
           NOTIFICATION_RECIPIENTS: !Join [ ',', !Ref AdminEmails ]
       Policies:
-        - !If [KeepLegacyDatabase, AWSLambdaVPCAccessExecutionRole, !Ref 'AWS::NoValue']
         - Statement:
             - Sid: SendReportFromVerifiedSender
               Effect: Allow
@@ -370,8 +247,6 @@ Resources:
           DB_PASSWORD: !Ref NeonDbPassword
           DB_DDL_AUTO: update
           NOTIFICATIONS_URL: !Sub https://${NotificationsApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
-      Policies:
-        - !If [KeepLegacyDatabase, AWSLambdaVPCAccessExecutionRole, !Ref 'AWS::NoValue']
       Events:
         SubmitFeedback:
           Type: HttpApi
