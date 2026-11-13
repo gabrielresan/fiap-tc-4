@@ -1,0 +1,200 @@
+{
+  "info": {
+    "name": "FIAP Tech Challenge 4 — AWS dev",
+    "description": "Requisições do ambiente dev em Ohio. Atualize as variáveis com as saídas da stack fiap-tc4-dev caso os endpoints mudem. O cadastro grava uma avaliação na Neon. A invocação do relatório pode enviar e-mail real pelo SES.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "feedbackEndpoint",
+      "value": "https://alj5wpz2o0.execute-api.us-east-2.amazonaws.com/avaliacao"
+    },
+    {
+      "key": "notificationsApiUrl",
+      "value": "https://uhaihmruhj.execute-api.us-east-2.amazonaws.com"
+    },
+    {
+      "key": "awsRegion",
+      "value": "us-east-2"
+    },
+    {
+      "key": "weeklyReportFunctionName",
+      "value": "dev-weekly-report"
+    }
+  ],
+  "item": [
+    {
+      "name": "Feedback service — Cadastrar avaliação crítica",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 201', () => pm.response.to.have.status(201));",
+              "pm.test('Avaliação classificada como CRITICAL', () => {",
+              "    pm.expect(pm.response.json().urgencia).to.eql('CRITICAL');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"descricao\": \"Teste de avaliação na AWS\",\n  \"nota\": 2\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{feedbackEndpoint}}",
+          "host": [
+            "{{feedbackEndpoint}}"
+          ]
+        },
+        "description": "Grava uma avaliação na Neon. Confira o encaminhamento no grupo /aws/lambda/dev-critical-notifications do CloudWatch."
+      }
+    },
+    {
+      "name": "Critical notifications — Registrar aviso direto",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Aviso registrado', () => pm.expect(pm.response.json().logged).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"description\": \"Teste direto de notificação na AWS\",\n  \"rating\": 2,\n  \"urgency\": \"CRITICAL\",\n  \"submittedAt\": \"{{$isoTimestamp}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{notificationsApiUrl}}/notifications",
+          "host": [
+            "{{notificationsApiUrl}}"
+          ],
+          "path": [
+            "notifications"
+          ]
+        },
+        "description": "Chama a API de notificações diretamente e registra um aviso de teste no CloudWatch."
+      }
+    },
+    {
+      "name": "Weekly report — Enviar relatório semanal",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Lambda concluiu sem erro', () => pm.expect(pm.response.headers.has('X-Amz-Function-Error')).to.eql(false));",
+              "pm.test('Relatório enviado', () => {",
+              "    pm.expect(pm.response.json()).to.be.a('string').and.include('Weekly report sent:');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "awsv4",
+          "awsv4": [
+            {
+              "key": "accessKey",
+              "value": "{{AWS_ACCESS_KEY_ID}}",
+              "type": "string"
+            },
+            {
+              "key": "secretKey",
+              "value": "{{AWS_SECRET_ACCESS_KEY}}",
+              "type": "string"
+            },
+            {
+              "key": "region",
+              "value": "{{awsRegion}}",
+              "type": "string"
+            },
+            {
+              "key": "service",
+              "value": "lambda",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Amz-Invocation-Type",
+            "value": "RequestResponse"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "https://lambda.{{awsRegion}}.amazonaws.com/2015-03-31/functions/{{weeklyReportFunctionName}}/invocations",
+          "host": [
+            "lambda",
+            "{{awsRegion}}",
+            "amazonaws",
+            "com"
+          ],
+          "path": [
+            "2015-03-31",
+            "functions",
+            "{{weeklyReportFunctionName}}",
+            "invocations"
+          ],
+          "protocol": "https"
+        },
+        "description": "Invocação síncrona com AWS Signature. Preencha AWS_ACCESS_KEY_ID e AWS_SECRET_ACCESS_KEY como valores locais no ambiente ativo do Postman. Para credenciais temporárias, configure também o campo Session Token. Esta chamada envia um e-mail real aos destinatários configurados."
+      }
+    }
+  ]
+}

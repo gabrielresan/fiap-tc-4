@@ -105,12 +105,18 @@ Os padrões de banco servem apenas para execução local. Em nuvem, as credencia
 
 ## Execução local
 
+### Ambiente integrado
+
+Use o [Compose da raiz](../README.md#executar-localmente-com-docker). A API fica em `http://localhost:8080`.
+
+### Execução com Maven
+
 Com JDK 21, Maven e Docker, execute a partir da raiz do repositório.
 
-Suba o PostgreSQL (porta `55433`):
+Suba o PostgreSQL do Compose da raiz e aguarde a inicialização:
 
 ```sh
-docker compose -f feedback-service/docker-compose.yml up -d
+docker compose up -d --wait postgres
 ```
 
 Inicie o `critical-notifications` (porta `8081`), em outro terminal:
@@ -134,26 +140,10 @@ Invoke-RestMethod -Method Post -Uri 'http://localhost:8080/avaliacao' -ContentTy
 
 O aviso `critical_notification` aparece no console do `critical-notifications`.
 
-### Coleção Postman
-
-A coleção `postman/feedback-service.postman_collection.json` tem 20 requisições com testes automáticos, em três pastas:
-
-1. **Avaliações válidas**: CRITICAL, MEDIUM, LOW e descrição com 2000 caracteres. Verifica status 201, `id`, eco dos campos, `dataEnvio` e urgência.
-2. **Limites de urgência**: notas 0, 3, 4, 6, 7 e 10.
-3. **Validação (400)**: descrição em branco, ausente ou com 2001 caracteres; nota ausente, nula, acima de 10, negativa ou decimal; JSON malformado; corpo vazio.
-
-Importe o arquivo no Postman, ajuste a variável de coleção `baseUrl` (padrão `http://localhost:8080`) e execute pelo Collection Runner. Pela linha de comando, com Node.js:
+Para parar o PostgreSQL e preservar os dados:
 
 ```sh
-npx newman run feedback-service/postman/feedback-service.postman_collection.json --env-var baseUrl=http://localhost:8080
-```
-
-Cada execução grava 10 avaliações novas no banco.
-
-Para encerrar e apagar os dados:
-
-```sh
-docker compose -f feedback-service/docker-compose.yml down -v
+docker compose stop postgres
 ```
 
 Para gerar o JAR executável:
@@ -162,6 +152,10 @@ Para gerar o JAR executável:
 mvn -f feedback-service/pom.xml clean package
 java -jar feedback-service/target/feedback-service-0.0.1-SNAPSHOT.jar
 ```
+
+## Testes
+
+Na [coleção Postman local](../postman/fiap-tc-4-local.postman_collection.json), execute a pasta **Feedback service** para validar o cadastro, os limites de urgência e as entradas inválidas. A pasta tem 20 requisições e cada execução grava 10 avaliações no banco local.
 
 ## Execução na AWS Lambda
 
@@ -187,7 +181,7 @@ O zip não inclui o Tomcat, pois na Lambda as requisições chegam pelo containe
 | Configuração | Valor |
 | --- | --- |
 | Runtime | Java 21 |
-| Handler | `com.example.feedbackservice.FeedbackServiceHandler::handleRequest` |
+| Handler | `br.com.fiap.tc4.feedback.FeedbackServiceHandler::handleRequest` |
 | Gatilho | API Gateway HTTP API (payload 2.0), rota `POST /avaliacao` |
 | Memória | 1024 MB ou mais (mais memória também dá mais CPU e acelera a inicialização) |
 | SnapStart | Recomendado: a inicialização do Spring leva de 8 a 10 s sem ele |

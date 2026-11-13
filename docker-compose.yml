@@ -5,6 +5,8 @@ services:
       POSTGRES_DB: feedbacks
       POSTGRES_USER: feedback_service
       POSTGRES_PASSWORD: feedback_service
+    ports:
+      - "127.0.0.1:55433:5432"
     volumes:
       - feedback-data:/var/lib/postgresql/data
       - ./weekly-report/src/test/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -53,6 +55,7 @@ services:
   mailpit:
     image: axllent/mailpit:v1.33.0
     ports:
+      - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
 
   weekly-report:

@@ -8,7 +8,7 @@
         <version>4.1.2</version>
         <relativePath/>
     </parent>
-    <groupId>com.example</groupId>
+    <groupId>br.com.fiap.tc4</groupId>
     <artifactId>feedback-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>feedback-service</name>
