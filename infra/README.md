@@ -31,11 +31,19 @@ Cada função tem pacote, papel IAM, grupo de logs e gatilho próprios.
 
 - **Conexão ao banco:** o driver PostgreSQL usa `sslmode=verify-full` para verificar o certificado e o nome do host da Neon.
 - **Credenciais do banco:** use GitHub Actions Secrets. O CloudFormation mascara a senha com `NoEcho`. Restrinja o acesso à configuração das Lambdas.
-- **Menor privilégio nas funções:** cada função tem seu próprio papel. A `weekly-report` recebe `ses:SendEmail`, restrita ao remetente configurado.
-- **E-mail sem senha:** a `weekly-report` envia pela API do SES com o papel IAM da função; não há usuário nem senha SMTP.
-- **Proteção das APIs:** limites de requisições por segundo nas duas APIs.
+- **Menor privilégio nas funções:** cada função tem seu próprio papel IAM, com apenas o que precisa:
+
+  | Função | Permissão além dos próprios logs |
+  | --- | --- |
+  | `feedback-service` | `execute-api:Invoke` somente na rota `POST /notifications` da API interna. |
+  | `critical-notifications` | `ses:SendEmail` somente com a identidade do remetente configurado. |
+  | `weekly-report` | `ses:SendEmail` somente quando o remetente é o endereço configurado. |
+
+- **E-mail sem senha:** as duas funções que enviam e-mail usam a API do SES com o papel IAM da própria função; não há usuário nem senha SMTP.
+- **API interna autenticada:** a rota `POST /notifications` exige assinatura AWS (autorização IAM). Só o `feedback-service`, que assina a chamada com as credenciais do seu papel, consegue chamá-la; requisições sem assinatura recebem 403.
+- **Limites de requisições:** a API pública aceita até 20 req/s (pico 50) e a interna até 5 req/s (pico 10).
 - **Dados pessoais nos logs:** os logs de acesso registram rota, status e latência, mas não o IP de quem chamou. Todos os logs expiram após o período de retenção.
-- **Deploy pelo GitHub Actions (OIDC):** o GitHub recebe credenciais temporárias (até 1 hora), sem access key guardada. Só workflows do repositório configurado, na branch `main`, podem assumir o papel de deploy. Esse papel só consegue criar *change sets* desta stack e enviar pacotes ao bucket do SAM; quem cria os recursos é o papel de execução, que apenas o serviço CloudFormation pode assumir.
+- **Deploy pelo GitHub Actions:** as credenciais da AWS e da Neon ficam nos *secrets* do repositório, mascarados nos logs. O workflow repassa a criação dos recursos ao papel de execução do CloudFormation (`--role-arn`); as permissões recomendadas para o usuário da pipeline estão em [Com o usuário IAM do projeto AWS](#com-o-usuário-iam-do-projeto-aws). O template também oferece papéis com OIDC para um deploy sem chaves de acesso (veja [Com OIDC](#com-oidc)).
 
 ## Parâmetros
 
@@ -146,6 +154,35 @@ O relatório considera a semana anterior. Avaliações da semana corrente aparec
 
 Para validar o aviso crítico, confirme o e-mail com descrição, urgência e data de envio. O grupo `/aws/lambda/dev-critical-notifications` registra `critical_notification_sent` com o ID retornado pelo SES, ou `critical_notification_delivery_failed` com a causa da falha. As duas funções usam o remetente e os destinatários configurados no deploy. Se o SES estiver no sandbox, verifique todos esses endereços em Ohio.
 
+## Monitoramento
+
+As funções e as APIs registram seus eventos no CloudWatch Logs, em grupos criados pelo próprio template, com retenção definida por `LogRetentionInDays` (padrão 14 dias).
+
+| Grupo de logs | O que registra |
+| --- | --- |
+| `/aws/lambda/dev-feedback-service` | Execuções do `feedback-service` e o resultado do encaminhamento de avaliações críticas. |
+| `/aws/lambda/dev-critical-notifications` | Execuções do `critical-notifications` e o resultado de cada envio pelo SES. |
+| `/aws/lambda/dev-weekly-report` | Execuções do relatório, com período, quantidade de avaliações e média. |
+| `/fiap-tc4/dev/api/feedback` | Uma linha JSON por requisição a `POST /avaliacao`: horário, rota, status HTTP, latência e erro de integração. |
+| `/fiap-tc4/dev/api/notifications` | O mesmo para as chamadas a `POST /notifications`. |
+
+Mensagens que indicam o andamento do fluxo:
+
+| Mensagem | Grupo | Significado |
+| --- | --- | --- |
+| `critical_notification_sent id=...` | `dev-feedback-service` | A avaliação crítica foi encaminhada ao `critical-notifications`. |
+| `critical_notification_failed id=...` | `dev-feedback-service` | O encaminhamento falhou; a avaliação continua gravada. |
+| `critical_notification_sent messageId=...` | `dev-critical-notifications` | O SES aceitou o e-mail de aviso. |
+| `critical_notification_delivery_failed` | `dev-critical-notifications` | O envio pelo SES falhou. |
+| `Weekly report sent: ...` | `dev-weekly-report` | O relatório foi gerado e enviado. |
+
+Para acompanhar em tempo real, use `aws logs tail` com `--follow`. No console, os mesmos dados ficam em **CloudWatch → Log groups** e, para cada função, em **Lambda → Monitor**, que mostra invocações, erros e duração.
+
+```sh
+aws logs tail /aws/lambda/dev-feedback-service --region us-east-2 --follow
+aws logs tail /aws/lambda/dev-critical-notifications --region us-east-2 --follow
+```
+
 ## Deploy pelo GitHub Actions
 
 ### Com o usuário IAM do projeto AWS
@@ -204,10 +241,9 @@ Remove a stack da AWS. A Neon e o bucket de artefatos são gerenciados fora dela
 
 ## Custos
 
-Os custos da AWS dependem do uso de Lambda, API Gateway, EventBridge, SES, CloudWatch e S3. Confira os limites do plano no console da Neon.
+Os custos da AWS dependem do uso de Lambda, API Gateway, EventBridge, SES, CloudWatch e S3, todos cobrados por uso. A Neon foi escolhida para o banco por não gerar custo para o projeto. Confira os limites do plano no console da Neon.
 
-## Limitações e evoluções
+## Observações de operação
 
-- **Usuário do banco:** as duas funções usam a mesma credencial. É possível separar as permissões de escrita e leitura em credenciais próprias.
-- **Falhas no aviso crítico:** a avaliação permanece gravada se a notificação falhar. Consulte os logs para identificar falhas de chamada ou de envio.
+- **Avisos críticos:** a avaliação é gravada antes do encaminhamento. Se o aviso falhar, o estudante recebe a confirmação normalmente e a falha fica registrada nos logs.
 - **SES em sandbox:** remetente e destinatários precisam ser verificados; envio limitado a 200 e-mails por dia.
