@@ -58,7 +58,7 @@ Os limites são configuráveis por `URGENCY_CRITICAL_MAX` e `URGENCY_MEDIUM_MAX`
 3. `FeedbackService` gera o `id`, define `dataEnvio` e grava a avaliação na tabela `feedbacks`.
 4. Se a urgência for `CRITICAL`, `HttpCriticalNotifier` chama `POST /notifications` do `critical-notifications` com `description`, `rating`, `urgency` e `submittedAt`.
 
-A avaliação é gravada **antes** da notificação. Se o `critical-notifications` estiver indisponível ou responder com erro, a avaliação continua gravada e o estudante recebe 201. A falha é registrada no log em nível ERROR (`critical_notification_failed id=...`), para que o monitoramento gere alertas. Não há retentativa automática.
+A avaliação é gravada **antes** da notificação. Se o `critical-notifications` estiver indisponível ou responder com erro, a avaliação continua gravada e o estudante recebe 201. A falha é registrada no log em nível ERROR (`critical_notification_failed id=...`) e pode ser acompanhada no [monitoramento](../infra/README.md#monitoramento). Não há retentativa automática.
 
 ## Responsabilidades
 
@@ -71,6 +71,7 @@ A avaliação é gravada **antes** da notificação. Se o `critical-notification
 | `UrgencyClassifier` | Converte a nota em urgência, segundo `UrgencyThresholds`. |
 | `FeedbackRepository` / `FeedbackEntity` | Grava na tabela `feedbacks` com Spring Data JPA. |
 | `HttpCriticalNotifier` | Chama o `critical-notifications` via `RestClient`, com timeouts. |
+| `ApiGatewayRequestSigner` | Na AWS, assina a chamada com as credenciais do papel da Lambda, exigidas pela autorização IAM da API interna. |
 
 A notificação fica atrás da interface `CriticalNotifier`. Assim, a chamada HTTP direta pode ser trocada por uma fila (por exemplo, SNS/SQS) sem alterar o serviço.
 
@@ -103,7 +104,7 @@ O Hibernate usa `ddl-auto=update`. Na primeira inicialização, cria a tabela e 
 | `URGENCY_CRITICAL_MAX` | `3` | Maior nota considerada `CRITICAL`. |
 | `URGENCY_MEDIUM_MAX` | `6` | Maior nota considerada `MEDIUM`. |
 
-Os padrões de banco servem apenas para execução local. Em nuvem, as credenciais devem vir de um gerenciador de segredos. A chamada ao `critical-notifications` tem timeout de conexão de 2 s e de leitura de 5 s.
+Os padrões de banco servem apenas para execução local. Na AWS, a conexão com a Neon vem dos *secrets* do GitHub Actions e é configurada pelo deploy. A chamada ao `critical-notifications` tem timeout de conexão de 2 s e de leitura de 5 s por padrão. Quando `NOTIFICATIONS_IAM_REGION` está preenchida, a chamada é assinada para a autorização IAM da API.
 
 ## Execução local
 
@@ -156,6 +157,8 @@ java -jar feedback-service/target/feedback-service-0.0.1-SNAPSHOT.jar
 ```
 
 ## Testes
+
+Execute `mvn -f feedback-service/pom.xml test` para verificar a assinatura das chamadas à API interna.
 
 Na [coleção Postman local](../postman/fiap-tc-4-local.postman_collection.json), execute a pasta **Feedback service** para validar o cadastro, os limites de urgência e as entradas inválidas. A pasta tem 20 requisições e cada execução grava 10 avaliações no banco local.
 
