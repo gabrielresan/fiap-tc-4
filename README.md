@@ -9,6 +9,7 @@ flowchart LR
     aluno[Aluno] -->|POST /avaliacao| feedback[feedback-service]
     feedback -->|grava| banco[(PostgreSQL)]
     feedback -->|POST /notifications| avisos[critical-notifications]
+    avisos -->|aviso crítico| email
     agenda[Agendamento semanal] --> relatorio[weekly-report]
     relatorio -->|consulta| banco
     relatorio -->|envia| email[E-mail]
@@ -22,7 +23,17 @@ Na AWS, os três módulos rodam em funções Lambda e o banco fica na Neon. O Ev
 | [critical-notifications](critical-notifications/README.md) | Envia avisos de avaliações críticas por e-mail na AWS. |
 | [weekly-report](weekly-report/README.md) | Gera e envia o relatório da semana anterior. |
 
-O [guia de infraestrutura](infra/README.md) cobre o deploy automático a cada push na `main`, a configuração da Neon, os testes na AWS e a pausa do ambiente.
+O [guia de infraestrutura](infra/README.md) cobre o deploy automático a cada push na `main`, a configuração da Neon, os testes na AWS, o monitoramento e a pausa do ambiente.
+
+## Modelo de cloud
+
+A solução usa nuvem pública com o modelo **serverless**:
+
+- **Funções como serviço (AWS Lambda):** cada responsabilidade do sistema é uma função independente, com pacote, gatilho, permissões e logs próprios. Não há servidores para administrar, a AWS escala as funções conforme a demanda e a cobrança acontece por execução.
+- **Gatilhos gerenciados:** o API Gateway (HTTP API) expõe `POST /avaliacao` e a rota interna de avisos; o EventBridge Scheduler dispara o relatório toda segunda-feira.
+- **Serviços gerenciados de apoio:** o Amazon SES envia os e-mails e o CloudWatch Logs centraliza os logs das funções e das APIs.
+- **Banco de dados gerenciado (Neon):** PostgreSQL como serviço, escolhido por não gerar custo para o projeto. Por ser PostgreSQL padrão, a aplicação usa o mesmo driver JDBC e o mesmo esquema do ambiente local, com conexão via TLS.
+- **Infraestrutura como código:** toda a parte da AWS é descrita em um template AWS SAM e publicada pelo GitHub Actions a cada push na `main`.
 
 Nos serviços HTTP, `controller` recebe as requisições, `dto` define as entradas e saídas, e `service` executa os casos de uso. `model` reúne os tipos de negócio, `repository` trata o banco e `integration` reúne as chamadas a outros serviços. Os erros da aplicação são tratados em `exception` e retornam `application/problem+json` com um campo `code`. No relatório semanal, a entrada é o handler da Lambda acionado pelo agendador.
 
